@@ -96,11 +96,11 @@ _trojan_build_inbound() {
     local domain;      domain=$(echo "$n" | jq -r '.domain')
     local listen_addr; listen_addr=$(echo "$n" | jq -r '.listen_addr // "127.0.0.1"')
     local cert_dir="$NGINX_SSL_DIR/$domain"
-    local fallback_enabled; fallback_enabled=$(echo "$n" | jq -r '.fallback_enabled // true')
+    local fallback_enabled; fallback_enabled=$(echo "$n" | jq -r '.fallback_enabled | if . == null then true else . end')
     # Trojan 的回落是协议设计的一部分：认证失败的连接原样交给 fallbacks，
     # 探测者看到的是一个正常网站而不是连接重置。
     local fallbacks_json="[]"
-    [[ "$fallback_enabled" == "true" ]] && fallbacks_json='[{"dest":"127.0.0.1:8080","xver":0}]'
+    [[ "$fallback_enabled" == "true" ]] && fallbacks_json="$XRAY_CAMOUFLAGE_FALLBACKS"
 
     jq -n \
         --arg tag "$tag" --arg listen "$listen_addr" --argjson port "$port" \

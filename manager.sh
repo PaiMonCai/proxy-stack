@@ -159,6 +159,8 @@ _banner() {
         elif echo "$_sv" | grep -q "v5"; then snell_ver="v5"
         else snell_ver="v4"
         fi
+    elif [[ -f /etc/init.d/snell ]] && grep -q 'jinqians/snell-server' /etc/init.d/snell; then
+        snell_ver="v5 (Docker)"
     fi
     if [[ -x "/usr/local/bin/ss-rust" ]]; then
         ss_ver=$(/usr/local/bin/ss-rust --version 2>/dev/null | awk '{print $2}' | head -1)

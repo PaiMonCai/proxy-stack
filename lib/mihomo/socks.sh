@@ -60,7 +60,7 @@ _mh_socks_build_listener() {
     local port; port=$(echo "$node_json" | jq -r '.port')
     local user; user=$(echo "$node_json" | jq -r '.username // ""')
     local pass; pass=$(echo "$node_json" | jq -r '.password // ""')
-    local udp;  udp=$(echo "$node_json"  | jq -r '.udp // true')
+    local udp;  udp=$(echo "$node_json"  | jq -r '.udp | if . == null then true else . end')
     local listen_addr; listen_addr=$(echo "$node_json" | jq -r '.listen_addr // "127.0.0.1"')
 
     local users_json="[]"

@@ -121,6 +121,11 @@ ask_yn "$(t uninstall.ask_snell)" N && {
     systemctl stop snell snell.socket snell-netns 2>/dev/null || true
     systemctl disable snell snell.socket snell-netns 2>/dev/null || true
     psm_remove_openrc_service snell
+    # Alpine installs Snell as the jinqians/snell-server image (lib/snell.sh)
+    if command -v docker &>/dev/null; then
+        docker rm -f psm-snell &>/dev/null || true
+        docker rmi jinqians/snell-server:v5 &>/dev/null || true
+    fi
     rm -f /usr/local/bin/snell-server /usr/local/bin/snell
     _remove_systemd_units snell.service snell.socket snell-netns.service
     rm -rf /etc/snell

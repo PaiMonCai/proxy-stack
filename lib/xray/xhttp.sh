@@ -110,7 +110,7 @@ _xhttp_build_inbound() {
     local domain;     domain=$(echo "$n"     | jq -r '.domain // ""')
     local listen_addr; listen_addr=$(echo "$n" | jq -r '.listen_addr // "127.0.0.1"')
     local cert_dir="$NGINX_SSL_DIR/$domain"
-    local fallback_enabled; fallback_enabled=$(echo "$n" | jq -r '.fallback_enabled // true')
+    local fallback_enabled; fallback_enabled=$(echo "$n" | jq -r '.fallback_enabled | if . == null then true else . end')
 
     # TLS 三件套对所有走 TLS 的模式都一样，抽出来避免四份重复
     local tls_common
@@ -238,7 +238,7 @@ _xhttp_build_inbound() {
     local fallbacks_json="[]"
     # reality-layer 与 mkcp 都不在 Xray 侧终止 TLS → 没有可回落的 HTTP 服务
     if [[ "$mode" != "reality-layer" && "$mode" != "mkcp" && "$fallback_enabled" == "true" ]]; then
-        fallbacks_json='[{"dest": "127.0.0.1:8080", "xver": 0}]'
+        fallbacks_json="$XRAY_CAMOUFLAGE_FALLBACKS"
     fi
     # VLESS Encryption 与 fallbacks 互斥（Xray 规定）
     local decryption; decryption=$(echo "$n" | jq -r '.vless_decryption // "none"')

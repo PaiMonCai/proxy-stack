@@ -91,9 +91,9 @@ _vision_build_inbound() {
     local flow;       flow=$(echo "$n"       | jq -r '.flow')
     local listen_addr; listen_addr=$(echo "$n" | jq -r '.listen_addr // "127.0.0.1"')
     local cert_dir="$NGINX_SSL_DIR/$domain"
-    local fallback_enabled; fallback_enabled=$(echo "$n" | jq -r '.fallback_enabled // true')
+    local fallback_enabled; fallback_enabled=$(echo "$n" | jq -r '.fallback_enabled | if . == null then true else . end')
     local fallbacks_json="[]"
-    [[ "$fallback_enabled" == "true" ]] && fallbacks_json='[{"dest":"127.0.0.1:8080","xver":0}]'
+    [[ "$fallback_enabled" == "true" ]] && fallbacks_json="$XRAY_CAMOUFLAGE_FALLBACKS"
     # VLESS Encryption 与 fallbacks 互斥（Xray 规定）：启用加密的节点不再回落伪装站
     local decryption; decryption=$(echo "$n" | jq -r '.vless_decryption // "none"')
     [[ "$decryption" != "none" ]] && fallbacks_json="[]"

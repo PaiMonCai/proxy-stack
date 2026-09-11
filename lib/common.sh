@@ -606,6 +606,9 @@ uuid_gen() {
 
 # ── Config test & reload ──────────────────────────────────────────────────────
 nginx_test_reload() {
+    # Alpine: a top-level stream {} from the distro in conf.d breaks PSM's
+    # nginx.conf (see lib/nginx.sh). Only defined once lib/nginx.sh is loaded.
+    declare -F _nginx_neutralize_toplevel_confd >/dev/null && _nginx_neutralize_toplevel_confd
     local test_out
     if test_out=$(nginx -t 2>&1); then
         svc_reload nginx || svc_restart nginx || {
@@ -624,6 +627,9 @@ xray_test_restart() {
     # xray_rebuild_from_stores runs every module's apply in a row and tests the
     # finished config once; testing each half-rebuilt intermediate would fail.
     [[ -n "${PSM_XRAY_DEFER_RESTART:-}" ]] && return 0
+    # Camouflage sites from before the h2 fallback (lib/nginx.sh); only defined
+    # once a module that uses the fallback has loaded lib/nginx.sh.
+    declare -F nginx_upgrade_http_camouflage >/dev/null && nginx_upgrade_http_camouflage
     local test_out
     if test_out=$("$XRAY_BIN" run -test -config "$XRAY_CFG_DIR/config.json" 2>&1) \
         || test_out=$("$XRAY_BIN" -test -config "$XRAY_CFG_DIR/config.json" 2>&1); then

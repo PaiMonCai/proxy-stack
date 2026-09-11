@@ -61,7 +61,7 @@ _socks_build_inbound() {
     local user;        user=$(echo "$n"     | jq -r '.username // ""')
     local pass;        pass=$(echo "$n"     | jq -r '.password // ""')
     local listen_addr; listen_addr=$(echo "$n" | jq -r '.listen_addr // "127.0.0.1"')
-    local udp;         udp=$(echo "$n"      | jq -r '.udp // true')
+    local udp;         udp=$(echo "$n"      | jq -r '.udp | if . == null then true else . end')
 
     local settings
     if [[ -n "$user" ]]; then

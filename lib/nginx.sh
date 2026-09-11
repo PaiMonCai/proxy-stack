@@ -7,6 +7,12 @@ NGINX_STREAM_D="$NGINX_STREAM_DIR"    # /etc/nginx/stream.d
 NGINX_HTTP_D="$NGINX_HTTP_DIR"         # /etc/nginx/conf.d
 NGINX_MAIN="/etc/nginx/nginx.conf"
 
+# Xray Vision / Trojan / XHTTP fallback into the local camouflage site. Their TLS
+# advertises ALPN h2 + http/1.1, so a browser or prober that negotiates h2 sends
+# HTTP/2 frames: those need the h2c listener (8081). An HTTP/1.1-only fallback
+# answers them with a broken connection instead of the site.
+XRAY_CAMOUFLAGE_FALLBACKS='[{"alpn":"h2","dest":"127.0.0.1:8081","xver":0},{"dest":"127.0.0.1:8080","xver":0}]'
+
 # ── Install ───────────────────────────────────────────────────────────────────
 nginx_install() {
     if is_installed nginx; then
@@ -154,6 +160,27 @@ _nginx_stream_load_directive() {
     fi
 }
 
+# Alpine's nginx-mod-stream ships /etc/nginx/conf.d/stream.conf holding a
+# top-level `stream {}` — Alpine's own nginx.conf includes conf.d OUTSIDE http.
+# PSM's nginx.conf uses the Debian layout (conf.d inside http {}), so that file
+# lands in http and nginx refuses to start: "stream" directive is not allowed
+# here. PSM's nginx.conf already has its own stream {} including stream.d, so
+# the distro file is redundant: keep a copy and blank it to a comment. apk does
+# not overwrite a modified protected config (a new one lands as .apk-new, which
+# does not match *.conf), so an upgrade does not bring the failure back.
+_nginx_neutralize_toplevel_confd() {
+    [[ "$(grep -c 'PSM-managed nginx.conf' "$NGINX_MAIN" 2>/dev/null)" -gt 0 ]] || return 0
+    local f
+    for f in "$NGINX_HTTP_D"/*.conf; do
+        [[ -f "$f" ]] || continue
+        grep -qE '^[[:space:]]*(stream|load_module)([[:space:]{]|$)' "$f" || continue
+        cp -a "$f" "${f}.psm-disabled"
+        printf '# Disabled by PSM: nginx.conf already has stream {} (it includes %s/*.conf).\n# The original is kept at %s\n' \
+            "$NGINX_STREAM_D" "${f}.psm-disabled" > "$f"
+        log_info "$(t nginx.confd_neutralized "$f")"
+    done
+}
+
 _write_nginx_main() {
     local nginx_user stream_load
     # Make sure the stream module is installed BEFORE we compute the load
@@ -161,6 +188,11 @@ _write_nginx_main() {
     _nginx_ensure_stream_module || true
     nginx_user="$(_nginx_runtime_user)"
     stream_load="$(_nginx_stream_load_directive)"
+    # The init script looks for the pid where the distro build puts it:
+    # Debian /run/nginx.pid, Alpine /run/nginx/nginx.pid. A different pid path
+    # here leaves rc-service/systemd unable to see or stop the running nginx.
+    local pid_path
+    pid_path=$(nginx -V 2>&1 | tr ' ' '\n' | sed -n 's/^--pid-path=//p' | head -1 || true)
 
     if [[ -f "$NGINX_MAIN" ]] && ! grep -q "PSM-managed nginx.conf" "$NGINX_MAIN"; then
         cp -a "$NGINX_MAIN" "${NGINX_MAIN}.psm.bak.$(date +%Y%m%d%H%M%S)"
@@ -170,7 +202,7 @@ _write_nginx_main() {
 # PSM-managed nginx.conf
 user ${nginx_user};
 worker_processes auto;
-pid /run/nginx.pid;
+pid ${pid_path:-/run/nginx.pid};
 ${stream_load}
 
 events {
@@ -215,6 +247,7 @@ stream {
     include /etc/nginx/stream.d/*.conf;
 }
 MAINCFG
+    _nginx_neutralize_toplevel_confd
 }
 
 nginx_upgrade() {
@@ -546,12 +579,22 @@ _ensure_camouflage_webroot() {
 HTML
 }
 
-# HTTP camouflage site on 127.0.0.1:8080
-# Used as Xray Vision/XHTTP fallback: Xray terminates TLS, forwards non-VLESS HTTP to 8080
+# HTTP camouflage site on 127.0.0.1:8080 (HTTP/1.1) and 127.0.0.1:8081 (h2c)
+# Used as Xray Vision/Trojan/XHTTP fallback: Xray terminates TLS and forwards
+# non-proxy traffic here, by negotiated ALPN (see XRAY_CAMOUFLAGE_FALLBACKS).
 nginx_setup_http_camouflage() {
     local domain="$1"
     nginx_ensure_local_http || return 1
+    _write_http_camouflage "$domain"
+    nginx_test_reload
+    log_ok "$(t nginx.camouflage.http_ready "$domain")"
+}
+
+_write_http_camouflage() {
+    local domain="$1"
     _ensure_camouflage_webroot
+    # `listen … http2` rather than `http2 on;`: the latter needs nginx 1.25.1+,
+    # the listen flag works on every supported release (newer ones only warn).
     cat > "$NGINX_HTTP_D/http-camouflage-${domain}.conf" <<EOF
 server {
     listen 127.0.0.1:8080;
@@ -567,9 +610,37 @@ server {
     access_log /var/log/nginx/camouflage-http.access.log;
     error_log  /var/log/nginx/camouflage-http.error.log;
 }
+
+# h2c: Xray hands connections that negotiated ALPN h2 to this listener
+server {
+    listen 127.0.0.1:8081 http2;
+    server_name ${domain};
+
+    root /var/www/psm-camouflage;
+    index index.html;
+
+    location / {
+        try_files \$uri \$uri/ =404;
+    }
+
+    access_log /var/log/nginx/camouflage-http.access.log;
+    error_log  /var/log/nginx/camouflage-http.error.log;
+}
 EOF
-    nginx_test_reload
-    log_ok "$(t nginx.camouflage.http_ready "$domain")"
+}
+
+# Camouflage sites written before the h2 fallback only listen on 8080, so the
+# h2 fallback would hit a closed port. Rewrite them once; idempotent.
+nginx_upgrade_http_camouflage() {
+    local f d changed=0
+    for f in "$NGINX_HTTP_D"/http-camouflage-*.conf; do
+        [[ -f "$f" ]] || continue
+        grep -q '127.0.0.1:8081' "$f" && continue
+        d=$(basename "$f" .conf); d=${d#http-camouflage-}
+        _write_http_camouflage "$d"; changed=1
+    done
+    (( changed )) && nginx_test_reload
+    return 0
 }
 
 # HTTPS camouflage site on 127.0.0.1:8443
