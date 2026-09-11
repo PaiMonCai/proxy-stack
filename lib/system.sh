@@ -147,7 +147,7 @@ set_dns() {
     esac
 
     # disable systemd-resolved stub if present
-    if systemctl is-active --quiet systemd-resolved; then
+    if _uses_systemd && systemctl is-active --quiet systemd-resolved; then
         sed -i 's/^#DNSStubListener=.*/DNSStubListener=no/' /etc/systemd/resolved.conf
         svc_restart systemd-resolved 2>/dev/null
         ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf 2>/dev/null
@@ -294,12 +294,7 @@ firewall_open_port() {
             ip6tables -C INPUT -p "$p" --dport "$port" -j ACCEPT 2>/dev/null \
                 || ip6tables -I INPUT -p "$p" --dport "$port" -j ACCEPT 2>/dev/null || true
         done
-        # Persist rules across reboots (RHEL family: /etc/sysconfig always
-        # exists; Debian family: create /etc/iptables so the save can land)
-        [[ -d /etc/sysconfig ]] || mkdir -p /etc/iptables 2>/dev/null || true
-        iptables-save  > /etc/sysconfig/iptables 2>/dev/null \
-            || iptables-save  > /etc/iptables/rules.v4 2>/dev/null || true
-        ip6tables-save > /etc/iptables/rules.v6  2>/dev/null || true
+        psm_iptables_persist   # survive reboots (per-distro location, see common.sh)
     fi
     log_ok "$(t system.fw.opened "$fw" "$port" "$proto")"
 }
@@ -330,7 +325,7 @@ configure_firewall() {
     else
         # firewalld may be installed but stopped — start it before we rely on it.
         if ! _fw_firewalld_active; then
-            command -v systemctl &>/dev/null && systemctl enable --now firewalld &>/dev/null
+            _svc_enable_now firewalld || true
             if ! firewall-cmd --state &>/dev/null; then
                 log_error "$(t system.fw.firewalld_start_fail)"
                 return 1

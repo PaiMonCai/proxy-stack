@@ -88,7 +88,13 @@ _rs_section_service() {
     fi
     local ver; ver=$("$bin" --version 2>/dev/null | head -1 | awk '{print $NF}')
     local state uptime=""
-    state=$(systemctl is-active realm 2>/dev/null || true)
+    if _uses_systemd; then
+        state=$(systemctl is-active realm 2>/dev/null || true)
+    else
+        # OpenRC 没有 ActiveEnterTimestamp，下面的运行时长一栏在这里留空
+        state=inactive
+        svc_is_active realm && state=active
+    fi
     if [[ "$state" == "active" ]]; then
         local since
         since=$(systemctl show realm --property=ActiveEnterTimestamp --value 2>/dev/null)

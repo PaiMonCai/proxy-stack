@@ -102,7 +102,7 @@ _realm_apply() {
             log_ok "$(t realm.service_applied "$count")"
         else
             log_error "$(t realm.service_not_active)"
-            journalctl -u realm -n 15 --no-pager 2>/dev/null || true
+            svc_log_tail realm 15
             return 1
         fi
     else
@@ -153,7 +153,7 @@ realm_install() {
 
     mkdir -p "$REALM_CFG_DIR"
     _realm_write_service
-    systemctl daemon-reload
+    svc_daemon_reload
     log_ok "$(t realm.install_done "$tag")"
 
     # 保留已有规则；仅在存储为空时提示新增第一条。
@@ -167,6 +167,10 @@ realm_install() {
 }
 
 _realm_write_service() {
+    if ! _uses_systemd; then
+        psm_write_openrc_service realm "realm relay service" "$REALM_BIN" "-c $REALM_TOML"
+        return
+    fi
     cat > "$REALM_SERVICE" <<EOF
 [Unit]
 Description=realm relay service
@@ -358,15 +362,16 @@ _realm_show_node_list() {
 realm_uninstall() {
     ask_yn "$(t realm.ask_uninstall)" N || return 0
     svc_stop realm 2>/dev/null || true
-    systemctl disable realm --quiet 2>/dev/null || true
+    svc_disable realm || true
+    psm_remove_openrc_service realm
     rm -f "$REALM_BIN" "$REALM_SERVICE"
     rm -rf "$REALM_CFG_DIR"
     rm -f "$REALM_STORE"
-    systemctl daemon-reload
+    svc_daemon_reload
     log_ok "$(t realm.uninstalled)"
 }
 
-realm_logs() { journalctl -u realm -f --no-pager; }
+realm_logs() { svc_logs realm; }
 
 # ── 状态报告（资源 / 网速 / 延迟；与 Telegram /relay 同源）────────────────────
 realm_status_report() {

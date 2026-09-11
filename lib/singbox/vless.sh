@@ -110,9 +110,13 @@ _sb_vless_apply() {
 
     # 只删本模块管的入站。不能按 type == "vless" 一刀切 —— Reality 节点也是
     # type vless，那是 singbox/reality.sh 的地盘，删掉会把用户的 Reality 节点抹掉。
+    # 但也不能只认 sb-vless- 前缀：psm node add --tag 可以起任意名字，只按前缀删
+    # 会让自定义 tag 的入站在下次 apply 时重复追加（duplicate inbound tag）。
     local tmp; tmp=$(mktemp)
-    jq 'del(.inbounds[] | select(((.tag // "") | startswith("sb-vless-"))))' \
-        "$SB_CFG" > "$tmp" && mv "$tmp" "$SB_CFG"
+    jq 'del(.inbounds[] | select(
+        ((.tag // "") | startswith("sb-vless-")) or
+        ((.type == "vless") and ((.tls.reality.enabled // false) | not))
+    ))' "$SB_CFG" > "$tmp" && mv "$tmp" "$SB_CFG"
 
     local i
     for (( i=0; i<count; i++ )); do

@@ -188,7 +188,7 @@ _f2b_ensure_firewall_backend() {
         return 0
     fi
     if [[ "$fw" == "firewalld" ]] && _f2b_has firewall-cmd; then
-        systemctl enable --now firewalld 2>/dev/null || true
+        _svc_enable_now firewalld || true
         for p in $ports; do
             firewall-cmd --permanent --add-port="${p}/tcp" &>/dev/null || true
             firewall-cmd --permanent --add-port="${p}/udp" &>/dev/null || true
@@ -271,11 +271,19 @@ f2b_configure_sshd_jail() {
     ask findtime "$(t security.f2b.ask_findtime)" "10m"
     ask bantime  "$(t security.f2b.ask_bantime)" "1h"
 
+    # Alpine：sshd 经 syslog 写进 /var/log/messages，而 fail2ban 自带路径指向的
+    # auth.log / secure 在那里不存在，jail 会因为找不到日志文件而起不来。
+    local logpath_line=""
+    if [[ "$backend" == "auto" && ! -e /var/log/auth.log && ! -e /var/log/secure && -e /var/log/messages ]]; then
+        logpath_line="logpath   = /var/log/messages"
+    fi
+
     cat > "$F2B_SSHD_JAIL" <<EOF
 # Managed by PSM — 通过「安全加固 → Fail2ban」菜单重新生成，请勿手动编辑
 [sshd]
 enabled   = true
 backend   = ${backend}
+${logpath_line}
 port      = ${ports}
 maxretry  = ${maxretry}
 findtime  = ${findtime}
@@ -421,7 +429,7 @@ f2b_unban() {
 f2b_uninstall() {
     ask_yn "$(t security.f2b.ask_uninstall)" N || return 0
     svc_stop fail2ban 2>/dev/null || true
-    systemctl disable fail2ban --quiet 2>/dev/null || true
+    svc_disable fail2ban || true
     rm -f "$F2B_SSHD_JAIL" "$F2B_RECIDIVE_JAIL" "$F2B_DEFAULTS_JAIL"
     log_ok "$(t security.f2b.uninstalled)"
 }

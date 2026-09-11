@@ -21,10 +21,11 @@ _systemctl_disable_now() {
     systemctl disable --now "$unit" 2>/dev/null || true
 }
 
-_systemctl_stop_disable() {
+# Stop + disable on either init system; on OpenRC also delete PSM's init script.
+_svc_stop_disable() {
     local unit="$1"
-    systemctl stop "$unit" 2>/dev/null || true
-    systemctl disable "$unit" --quiet 2>/dev/null || true
+    svc_stop "$unit" &>/dev/null || true
+    svc_disable "$unit" &>/dev/null || true
 }
 
 _remove_systemd_units() {
@@ -66,9 +67,11 @@ _remove_psm_iptables() {
 
 # ── Optional component removal ────────────────────────────────────────────────
 ask_yn "$(t uninstall.ask_nginx)" N && {
-    _systemctl_stop_disable nginx
+    _svc_stop_disable nginx
     detect_os
     case "$OS_ID" in
+        alpine)
+            apk del nginx nginx-mod-stream 2>/dev/null || true ;;
         ubuntu|debian|raspbian)
             apt-get purge -y nginx nginx-common 2>/dev/null || true ;;
         centos|rhel|rocky|almalinux|ol|amzn|fedora)
@@ -79,53 +82,68 @@ ask_yn "$(t uninstall.ask_nginx)" N && {
 }
 
 ask_yn "$(t uninstall.ask_xray)" N && {
-    _systemctl_stop_disable xray
+    _svc_stop_disable xray
     rm -f /usr/local/bin/xray /etc/systemd/system/xray.service
+    psm_remove_openrc_service xray
     rm -rf "$XRAY_CFG_DIR" /var/log/xray /usr/local/share/xray
-    systemctl daemon-reload
+    svc_daemon_reload
     log_ok "$(t uninstall.xray_removed)"
 }
 
 ask_yn "$(t uninstall.ask_singbox)" N && {
-    _systemctl_stop_disable sing-box
+    _svc_stop_disable sing-box
     rm -f "$SINGBOX_BIN" /etc/systemd/system/sing-box.service
+    psm_remove_openrc_service sing-box
     rm -rf "$SINGBOX_CFG_DIR"
-    systemctl daemon-reload
+    svc_daemon_reload
     log_ok "$(t uninstall.singbox_removed)"
 }
 
 ask_yn "$(t uninstall.ask_mihomo)" N && {
-    _systemctl_stop_disable mihomo
+    _svc_stop_disable mihomo
     rm -f "$MIHOMO_BIN" /etc/systemd/system/mihomo.service
+    psm_remove_openrc_service mihomo
     rm -rf "$MIHOMO_CFG_DIR" "$CFG_DIR/mihomo"
-    systemctl daemon-reload
+    svc_daemon_reload
     log_ok "$(t uninstall.mihomo_removed)"
 }
 
 ask_yn "$(t uninstall.ask_hy2)" N && {
-    _systemctl_stop_disable hysteria-server
+    _svc_stop_disable hysteria-server
     rm -f /usr/local/bin/hysteria /etc/systemd/system/hysteria-server.service
+    psm_remove_openrc_service hysteria-server
     rm -rf /etc/hysteria
-    systemctl daemon-reload
+    svc_daemon_reload
     log_ok "$(t uninstall.hy2_removed)"
 }
 
 ask_yn "$(t uninstall.ask_snell)" N && {
     systemctl stop snell snell.socket snell-netns 2>/dev/null || true
     systemctl disable snell snell.socket snell-netns 2>/dev/null || true
+    psm_remove_openrc_service snell
     rm -f /usr/local/bin/snell-server /usr/local/bin/snell
     _remove_systemd_units snell.service snell.socket snell-netns.service
     rm -rf /etc/snell
-    systemctl daemon-reload
+    svc_daemon_reload
     log_ok "$(t uninstall.snell_removed)"
 }
 
 ask_yn "$(t uninstall.ask_ssrust)" N && {
-    _systemctl_stop_disable ss-rust
+    _svc_stop_disable ss-rust
     rm -f /usr/local/bin/ss-rust /etc/systemd/system/ss-rust.service
+    psm_remove_openrc_service ss-rust
     rm -rf /etc/ss-rust
-    systemctl daemon-reload
+    svc_daemon_reload
     log_ok "$(t uninstall.ssrust_removed)"
+}
+
+ask_yn "$(t uninstall.ask_realm)" N && {
+    _svc_stop_disable realm
+    rm -f /usr/local/bin/realm /etc/systemd/system/realm.service
+    psm_remove_openrc_service realm
+    rm -rf /etc/realm
+    svc_daemon_reload
+    log_ok "$(t uninstall.realm_removed)"
 }
 
 ask_yn "$(t uninstall.ask_docker)" N && {
@@ -156,8 +174,12 @@ ask_yn "$(t uninstall.ask_certs "$NGINX_SSL_DIR")" N && {
     log_ok "$(t uninstall.certs_removed)"
 }
 
-# Remove crons and PSM-owned systemd units.
-rm -f /etc/cron.d/psm-backup /etc/cron.d/psm-ddns
+# Remove crons and PSM-owned systemd units (on OpenRC: cron drop-ins + init scripts).
+rm -f /etc/cron.d/psm-backup /etc/cron.d/psm-ddns \
+      /etc/cron.d/psm-traffic /etc/cron.d/psm-ruleset-update /etc/cron.d/psm-reality-watchdog \
+      /etc/cron.d/psm-health-report /etc/cron.d/psm-vpngate-watchdog /etc/local.d/psm-traffic.stop
+psm_remove_openrc_service psm-tgbot
+psm_remove_openrc_service psm-vpngate
 _systemctl_disable_now psm-reality-watchdog.timer
 _systemctl_disable_now psm-vpngate-watchdog.timer
 _systemctl_disable_now psm-ruleset-update.timer

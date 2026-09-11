@@ -57,10 +57,14 @@ _mh_snell_build_listener() {
     local listen; listen=$(echo "$node_json" | jq -r '.listen // "::"')
     local om;   om=$(echo "$node_json"   | jq -r '.obfs_mode // ""')
     local oh;   oh=$(echo "$node_json"   | jq -r '.obfs_host // ""')
+    # ShadowTLS v3（与 obfs 互斥：mihomo 规定 shadow-tls / obfs 只能二选一）
+    local spw;  spw=$(echo "$node_json"  | jq -r '.stls_password // ""')
+    local ssni; ssni=$(echo "$node_json" | jq -r '.stls_sni // ""')
 
     jq -n \
         --arg tag "$tag" --arg listen "$listen" --argjson p "$port" \
         --argjson ver "$ver" --arg psk "$psk" --arg om "$om" --arg oh "$oh" \
+        --arg spw "$spw" --arg ssni "$ssni" \
     '{
         name: $tag,
         type: "snell",
@@ -70,7 +74,10 @@ _mh_snell_build_listener() {
         psk: $psk,
         udp: true
     }
-    + (if ($om == "http" or $om == "tls")
+    + (if $spw != "" then { "shadow-tls": { enable: true, version: 3,
+            users: [ { name: "u1", password: $spw } ],
+            handshake: { dest: ($ssni + ":443") } } }
+       elif ($om == "http" or $om == "tls")
        then { "obfs-opts": { mode: $om, host: (if $oh == "" then "bing.com" else $oh end) } }
        else {} end)'
 }
@@ -122,8 +129,14 @@ _mh_snell_share() {
     printf "  %-12s v%s\n" "$(t mh.snell.label_ver):"   "$ver"
     echo ""
 
+    local spw;  spw=$(echo "$node"  | jq -r '.stls_password // ""')
+    local ssni; ssni=$(echo "$node" | jq -r '.stls_sni // ""')
     local surge="PSM-${tag} = snell, ${ip}, ${port}, psk=${psk}, version=${ver}"
-    [[ -n "$om" ]] && surge="${surge}, obfs=${om}, obfs-host=${oh:-bing.com}"
+    if [[ -n "$spw" ]]; then
+        surge="${surge}, shadow-tls-password=${spw}, shadow-tls-sni=${ssni}, shadow-tls-version=3"
+    elif [[ -n "$om" ]]; then
+        surge="${surge}, obfs=${om}, obfs-host=${oh:-bing.com}"
+    fi
     echo -e "${BOLD}$(t mh.snell.surge_label):${NC}"
     echo "  $surge"
     echo ""
@@ -135,7 +148,14 @@ _mh_snell_share() {
     echo "    port: ${port}"
     echo "    psk: ${psk}"
     echo "    version: ${ver}"
-    if [[ -n "$om" ]]; then
+    if [[ -n "$spw" ]]; then
+        echo "    client-fingerprint: chrome"
+        echo "    obfs-opts:"
+        echo "      mode: shadow-tls"
+        echo "      host: ${ssni}"
+        echo "      password: \"${spw}\""
+        echo "      version: 3"
+    elif [[ -n "$om" ]]; then
         echo "    obfs-opts:"
         echo "      mode: ${om}"
         echo "      host: ${oh:-bing.com}"
@@ -173,13 +193,21 @@ mh_snell_add_node() {
         case "${obfs_mode:-http}" in tls) obfs_mode="tls" ;; *) obfs_mode="http" ;; esac
         ask obfs_host "$(t mh.snell.ask_obfs_host)" "bing.com"
     fi
+    # ShadowTLS 与 obfs 互斥，选了 obfs 就不再询问
+    local stls=""
+    if [[ -z "$obfs_mode" ]]; then
+        declare -f _mh_ask_shadowtls &>/dev/null || source "$(dirname "${BASH_SOURCE[0]}")/ss2022.sh"
+        stls=$(_mh_ask_shadowtls) || return 1
+    fi
 
     local node_json
     node_json=$(jq -n \
         --arg tag "$tag" --argjson port "$port" --argjson ver "$version" \
         --arg psk "$psk" --arg listen "$listen" \
-        --arg om "$obfs_mode" --arg oh "$obfs_host" \
-        '{tag:$tag, port:$port, version:$ver, psk:$psk, listen:$listen, obfs_mode:$om, obfs_host:$oh}')
+        --arg om "$obfs_mode" --arg oh "$obfs_host" --arg stls "$stls" \
+        '{tag:$tag, port:$port, version:$ver, psk:$psk, listen:$listen, obfs_mode:$om, obfs_host:$oh}
+         | (if $stls != "" then ($stls | split("\t")) as $s
+              | .stls_sni = $s[0] | .stls_password = $s[1] else . end)')
 
     local _prev_store; _prev_store=$(_mh_snell_load)
     _mh_snell_upsert "$node_json"

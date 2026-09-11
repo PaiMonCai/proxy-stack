@@ -616,10 +616,24 @@ traffic_check() {
 
 # ── Systemd timer management ──────────────────────────────────────────────────
 _trf_timer_active() {
+    _uses_systemd || { psm_cron_active psm-traffic; return; }
     systemctl is-active --quiet psm-traffic.timer 2>/dev/null
 }
 
 _trf_install_timer() {
+    if ! _uses_systemd; then
+        # OpenRC: cron runs the check every minute, and the "local" service runs
+        # /etc/local.d/*.stop on halt/reboot in place of the shutdown unit.
+        psm_cron_set psm-traffic "* * * * *" "--traffic-check"
+        printf '#!/bin/sh\ntimeout 15 %s/manager.sh --traffic-check >/dev/null 2>&1\n' "$PSM_ROOT" \
+            > /etc/local.d/psm-traffic.stop
+        chmod 755 /etc/local.d/psm-traffic.stop
+        svc_enable local || true
+        log_ok "$(t traffic.timer.installed)"
+        log_ok "$(t traffic.timer.line_check)"
+        log_ok "$(t traffic.timer.line_shutdown)"
+        return 0
+    fi
     # Periodic check service (run by the timer)
     cat > "$PSM_TRAFFIC_SVC" <<EOF
 [Unit]
@@ -677,6 +691,12 @@ EOF
 }
 
 _trf_uninstall_timer() {
+    if ! _uses_systemd; then
+        psm_cron_remove psm-traffic
+        rm -f /etc/local.d/psm-traffic.stop
+        log_ok "$(t traffic.timer.removed)"
+        return 0
+    fi
     systemctl disable --now psm-traffic.timer            2>/dev/null || true
     systemctl disable     psm-traffic-shutdown.service   2>/dev/null || true
     rm -f "$PSM_TRAFFIC_SVC" "$PSM_TRAFFIC_TIMER" "$PSM_TRAFFIC_SHUTDOWN"
@@ -824,6 +844,14 @@ _trf_add_wizard() {
                 printf "  ${CYAN}%2d.${NC} %-22s %s %-6s ${YELLOW}[Trojan / Xray API]${NC}\n" \
                     "$i" "$tag" "$(t traffic.port_label)" "$port"
             done < <(_trojan_list 2>/dev/null)
+    } || true
+    {
+        source "$LIB_DIR/xray/hysteria2.sh" 2>/dev/null && \
+            while IFS=$'\t' read -r tag port _; do
+                i=$((i+1)); tags+=("$tag"); ports+=("$port"); sources+=("xray"); cports+=("$port"); ifaces+=("")
+                printf "  ${CYAN}%2d.${NC} %-22s %s %-6s ${YELLOW}[Hysteria2 / Xray API]${NC}\n" \
+                    "$i" "$tag" "$(t traffic.port_label)" "$port"
+            done < <(_xhy2_list 2>/dev/null)
     } || true
     {
         source "$LIB_DIR/xray/vmess.sh" 2>/dev/null && \

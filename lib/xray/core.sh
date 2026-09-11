@@ -148,19 +148,75 @@ xray_install() {
             local backup_cfg
             backup_cfg="${XRAY_CFG}.bad.$(date +%Y%m%d%H%M%S)"
             cp -a "$XRAY_CFG" "$backup_cfg"
-            log_warn "$(t xray.bad_config_backup "$backup_cfg")"
-            _write_skeleton_config
+            # A config the previous core accepted but this one rejects is usually
+            # version-dependent output (e.g. mKCP), not broken nodes: regenerate
+            # from the node stores first; only fall back to an empty skeleton —
+            # which drops every node from the live config — if that fails too.
+            if xray_rebuild_from_stores; then
+                log_ok "$(t xray.rebuilt_for_core)"
+            else
+                log_warn "$(t xray.bad_config_backup "$backup_cfg")"
+                _write_skeleton_config
+            fi
         fi
     else
         _write_skeleton_config
     fi
 
     _write_xray_service
-    systemctl daemon-reload
+    svc_daemon_reload
     svc_enable xray
     svc_restart xray || svc_start xray
     log_ok "$(t xray.install_done "$tag")"
     _xray_post_install_wizard
+}
+
+# ── Rebuild after a core change ───────────────────────────────────────────────
+# Some inbound fields are generated per Xray version (mKCP seed/header — see
+# xray/xhttp.sh), so a config written for the previous core can be rejected by
+# the new one although every node is fine. Regenerate all PSM-managed inbounds
+# from the node stores, then test the finished config once (the per-module
+# test/restart is deferred: intermediate states would fail it).
+xray_rebuild_from_stores() {
+    local entry fn
+    unset _XRAY_KCP_LEGACY          # the probe result belongs to the old binary
+    PSM_XRAY_DEFER_RESTART=1
+    for entry in reality:_reality_apply_all vision:_vision_apply_all \
+                 xhttp:_xhttp_apply_all ss2022:_xss_apply_to_xray \
+                 trojan:_trojan_apply_all vmess:_vmess_apply_all socks:_socks_apply_all \
+                 hysteria2:_xhy2_apply_all; do
+        fn="${entry#*:}"
+        declare -f "$fn" &>/dev/null || source "$LIB_DIR/xray/${entry%%:*}.sh" 2>/dev/null || continue
+        declare -f "$fn" &>/dev/null && { "$fn" >/dev/null 2>&1 || true; }
+    done
+    unset PSM_XRAY_DEFER_RESTART
+    "$XRAY_BIN" run -test -config "$XRAY_CFG" &>/dev/null
+}
+
+# ── VLESS Encryption (post-quantum) ───────────────────────────────────────────
+# `xray vlessenc` prints two ready-made pairs; the ephemeral key exchange is
+# ML-KEM-768 + X25519 either way, only the server authentication differs:
+#   x25519   (default) short strings, fine for links and QR codes
+#   mlkem768 post-quantum authentication, but a ~1.6 KB client string
+# Prints "<decryption>\t<encryption>" (server / client halves).
+xray_vlessenc_gen() {
+    local auth="${1:-x25519}" want="X25519"
+    [[ "$auth" == "mlkem768" ]] && want="ML-KEM-768"
+    "$XRAY_BIN" vlessenc 2>/dev/null | awk -v want="$want" '
+        /^Authentication:/   { on = index($0, want) > 0; next }
+        on && /"decryption"/ { sub(/^[^:]*: *"/, ""); sub(/"$/, ""); d = $0 }
+        on && /"encryption"/ { sub(/^[^:]*: *"/, ""); sub(/"$/, ""); e = $0 }
+        END { if (d == "" || e == "") exit 1; printf "%s\t%s\n", d, e }'
+}
+
+# Interactive: offer VLESS Encryption. Prints the pair, or nothing when declined.
+xray_ask_vlessenc() {
+    ask_yn "$(t common.vlessenc.ask)" N || return 0
+    echo -e "  $(t common.vlessenc.auth1)" >&2
+    echo -e "  $(t common.vlessenc.auth2)" >&2
+    local c; read -rp "$(echo -e "${CYAN}$(t common.vlessenc.ask_auth)${NC}")" c
+    local auth="x25519"; [[ "$c" == "2" ]] && auth="mlkem768"
+    xray_vlessenc_gen "$auth" || { log_error "$(t common.vlessenc.gen_fail)"; return 1; }
 }
 
 _write_skeleton_config() {
@@ -198,6 +254,10 @@ EOF
 }
 
 _write_xray_service() {
+    if ! _uses_systemd; then
+        psm_write_openrc_service xray "Xray Service" "$XRAY_BIN" "run -config $XRAY_CFG"
+        return
+    fi
     cat > "$XRAY_SERVICE" <<'EOF'
 [Unit]
 Description=Xray Service
@@ -252,9 +312,10 @@ xray_uninstall() {
 
     # ── Stop service ──────────────────────────────────────────────────────────
     svc_stop xray 2>/dev/null || true
-    systemctl disable xray --quiet 2>/dev/null || true
+    svc_disable xray || true
     systemctl disable --now psm-reality-watchdog.timer 2>/dev/null || true
     rm -f /etc/systemd/system/psm-reality-watchdog.service /etc/systemd/system/psm-reality-watchdog.timer
+    psm_cron_remove psm-reality-watchdog
 
     # ── Clean protocol nodes: SNI entries + traffic records ───────────────────
     source "$LIB_DIR/nginx.sh"   2>/dev/null || true
@@ -305,9 +366,10 @@ xray_uninstall() {
           "$CFG_DIR/xray/warp_account.json" "$CFG_DIR/xray/reality_watchdog.json"
 
     # ── Binary, service, Xray config dir, geo data, logs ─────────────────────
+    psm_remove_openrc_service xray
     rm -f  "$XRAY_BIN" "$XRAY_SERVICE"
     rm -rf "$XRAY_CFG_DIR" /usr/local/share/xray /var/log/xray
-    systemctl daemon-reload
+    svc_daemon_reload
 
     log_ok "$(t xray.uninstalled)"
 }
@@ -362,7 +424,7 @@ xray_logs() {
     case "$lc" in
         1) tail -f /var/log/xray/access.log ;;
         2) tail -f /var/log/xray/error.log ;;
-        3) journalctl -u xray -f --no-pager ;;
+        3) svc_logs xray ;;
     esac
 }
 
@@ -378,9 +440,11 @@ _xray_post_install_wizard() {
     echo -e "  5. $(t xray.protocol.trojan)"
     echo -e "  6. $(t xray.protocol.vmess)"
     echo -e "  7. $(t xray.protocol.socks)"
+    echo -e "  8. $(t xray.protocol.hysteria2)"
     read -rp "$(echo -e "${CYAN}$(t xray.ask_select_default)${NC}")" pc
     echo ""
     case "${pc:-1}" in
+        8) source "$(dirname "${BASH_SOURCE[0]}")/hysteria2.sh"; xhy2_add_node ;;
         1) source "$(dirname "${BASH_SOURCE[0]}")/reality.sh"; reality_add_node ;;
         2) source "$(dirname "${BASH_SOURCE[0]}")/vision.sh";  vision_add_node ;;
         3) source "$(dirname "${BASH_SOURCE[0]}")/xhttp.sh";   xhttp_add_node ;;
@@ -429,6 +493,7 @@ _xray_view_all_nodes() {
     source "$(dirname "${BASH_SOURCE[0]}")/trojan.sh"
     source "$(dirname "${BASH_SOURCE[0]}")/vmess.sh"
     source "$(dirname "${BASH_SOURCE[0]}")/socks.sh"
+    source "$(dirname "${BASH_SOURCE[0]}")/hysteria2.sh"
 
     # 展示前把 config.json 中的手动修改（端口/UUID/密码）同步回各协议的
     # 节点存储，否则这里和后续 show 函数显示的都是旧值。
@@ -488,6 +553,12 @@ _xray_view_all_nodes() {
                "$i" "$tag" "$port" "$listen" "$auth"
     done < <(_socks_list 2>/dev/null)
 
+    while IFS=$'\t' read -r tag port sni obfs; do
+        i=$((i+1)); _protos+=("hysteria2"); _tags+=("$tag")
+        printf "  ${CYAN}%2d.${NC} ${GREEN}[Hy2]${NC}      %-18s  port=%-6s  sni=%-15s  obfs=%s\n" \
+               "$i" "$tag" "$port" "$sni" "$obfs"
+    done < <(_xhy2_list 2>/dev/null)
+
     if (( i == 0 )); then
         log_warn "$(t xray.no_nodes)"
         return
@@ -512,6 +583,7 @@ _xray_view_all_nodes() {
         trojan)  trojan_show_share "$tag" ;;
         vmess)   vmess_show_share  "$tag" ;;
         socks)   socks_show_share  "$tag" ;;
+        hysteria2) xhy2_show_share "$tag" ;;
     esac
 }
 
@@ -525,9 +597,11 @@ _xray_protocol_menu() {
             "$(t xray.protocol_menu.ss2022)" \
             "$(t xray.protocol_menu.trojan)" \
             "$(t xray.protocol_menu.vmess)" \
-            "$(t xray.protocol_menu.socks)"
+            "$(t xray.protocol_menu.socks)" \
+            "$(t xray.protocol_menu.hysteria2)"
 
         case "$MENU_CHOICE" in
+            8) source "$(dirname "${BASH_SOURCE[0]}")/hysteria2.sh"; xhy2_menu ;;
             1) source "$(dirname "${BASH_SOURCE[0]}")/reality.sh"; reality_menu ;;
             2) source "$LIB_DIR/nginx.sh"; source "$(dirname "${BASH_SOURCE[0]}")/vision.sh"; vision_menu ;;
             3) source "$LIB_DIR/nginx.sh"; source "$(dirname "${BASH_SOURCE[0]}")/xhttp.sh"; xhttp_menu ;;

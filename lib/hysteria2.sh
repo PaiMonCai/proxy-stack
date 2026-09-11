@@ -59,7 +59,7 @@ hy2_install() {
     mkdir -p /etc/hysteria
 
     _hy2_write_service
-    systemctl daemon-reload
+    svc_daemon_reload
 
     log_ok "$(t hysteria2.install_done "$tag")"
 
@@ -164,6 +164,10 @@ EOF
 }
 
 _hy2_write_service() {
+    if ! _uses_systemd; then
+        psm_write_openrc_service hysteria-server "Hysteria2 Server" "$HY2_BIN" "server -c $HY2_CFG"
+        return
+    fi
     cat > "$HY2_SERVICE" <<'EOF'
 [Unit]
 Description=Hysteria2 Server
@@ -265,14 +269,15 @@ EOF
 hy2_uninstall() {
     ask_yn "$(t hysteria2.ask_uninstall)" N || return 0
     svc_stop hysteria-server
-    systemctl disable hysteria-server --quiet 2>/dev/null
+    svc_disable hysteria-server || true
+    psm_remove_openrc_service hysteria-server
     rm -f "$HY2_BIN" "$HY2_SERVICE"
-    systemctl daemon-reload
+    svc_daemon_reload
     log_ok "$(t hysteria2.uninstalled)"
 }
 
 hy2_logs() {
-    journalctl -u hysteria-server -f --no-pager
+    svc_logs hysteria-server
 }
 
 # ── Dependency check ──────────────────────────────────────────────────────────

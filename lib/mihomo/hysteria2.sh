@@ -58,11 +58,13 @@ _mh_hy2_build_listener() {
     local key;   key=$(echo "$node_json"   | jq -r '.key_path')
     local masq;  masq=$(echo "$node_json"  | jq -r '.masquerade // ""')
     local obfs;  obfs=$(echo "$node_json"  | jq -r '.obfs_pass // ""')
+    # salamander（默认，老节点没有这个字段）或 gecko（mihomo 1.19.26+）
+    local otype; otype=$(echo "$node_json" | jq -r '.obfs_type // "salamander"')
 
     jq -n \
         --arg tag "$tag" --argjson p "$port" --arg pass "$pass" \
         --arg sni "$sni" --arg cert "$cert" --arg key "$key" \
-        --arg masq "$masq" --arg obfs "$obfs" \
+        --arg masq "$masq" --arg obfs "$obfs" --arg otype "$otype" \
     '{
         name: $tag,
         type: "hysteria2",
@@ -73,7 +75,7 @@ _mh_hy2_build_listener() {
         certificate: $cert,
         "private-key": $key
     }
-    + (if $obfs != "" then { obfs: "salamander", "obfs-password": $obfs } else {} end)
+    + (if $obfs != "" then { obfs: $otype, "obfs-password": $obfs } else {} end)
     + (if $masq != "" then { masquerade: $masq } else {} end)'
 }
 
@@ -109,16 +111,17 @@ _mh_hy2_uri() {
     local node; node=$(_mh_hy2_get_by_tag "$tag")
     [[ -z "$node" ]] && { log_error "$(t mh.hy2.not_found "$tag")"; return 1; }
 
-    local port pass sni insec obfs
+    local port pass sni insec obfs otype
     port=$(echo "$node"  | jq -r '.port')
     pass=$(echo "$node"  | jq -r '.password')
     sni=$(echo "$node"   | jq -r '.sni')
     insec=$(echo "$node" | jq -r '.insecure')
     obfs=$(echo "$node"  | jq -r '.obfs_pass // ""')
+    otype=$(echo "$node" | jq -r '.obfs_type // "salamander"')
 
     local ip; ip=$(get_ipv4)
     local uri="hysteria2://${pass}@${ip}:${port}?insecure=${insec}&sni=${sni}"
-    [[ -n "$obfs" ]] && uri="${uri}&obfs=salamander&obfs-password=${obfs}"
+    [[ -n "$obfs" ]] && uri="${uri}&obfs=${otype}&obfs-password=${obfs}"
     uri="${uri}#PSM-${tag}"
 
     echo -e "\n${BOLD}${GREEN}── mihomo Hysteria2: ${tag} ──${NC}"
@@ -127,7 +130,7 @@ _mh_hy2_uri() {
     printf "  %-12s %s\n" "$(t mh.hy2.label_port):"   "$port"
     printf "  %-12s %s\n" "$(t mh.hy2.label_pass):"   "$pass"
     printf "  %-12s %s\n" "SNI:"                      "$sni"
-    [[ -n "$obfs" ]] && printf "  %-12s %s\n" "Obfs:" "salamander"
+    [[ -n "$obfs" ]] && printf "  %-12s %s\n" "Obfs:" "$otype"
     echo ""
     echo -e "${BOLD}$(t mh.hy2.link_label):${NC}"
     echo "  $uri"
@@ -136,7 +139,7 @@ _mh_hy2_uri() {
     echo "$uri" | qrencode -t ANSIUTF8 2>/dev/null || true
 
     local obfs_yaml=""
-    [[ -n "$obfs" ]] && obfs_yaml=$'\n    obfs: salamander\n    obfs-password: '"${obfs}"
+    [[ -n "$obfs" ]] && obfs_yaml=$'\n    obfs: '"${otype}"$'\n    obfs-password: '"${obfs}"
     echo -e "\n${BOLD}$(t mh.hy2.clash_label):${NC}"
     cat <<EOF
 proxies:
@@ -187,10 +190,15 @@ mh_hy2_add_node() {
 
     # Salamander 混淆：开启后 QUIC 报文被混淆，更难被主动探测识别。
     # 服务端与客户端必须使用相同密码，故会写入分享链接。
-    local obfs_pass=""
+    local obfs_pass="" obfs_type="salamander"
     if ask_yn "$(t mh.hy2.ask_obfs)" N; then
-        obfs_pass=$(rand_str 16)
-        ask obfs_pass "$(t mh.hy2.ask_obfs_pass)" "$obfs_pass"
+        ask_hy2_obfs_pass obfs_pass "$(t mh.hy2.ask_obfs_pass)"
+        # Gecko：在 Salamander 之上对 QUIC 长包头再做分片填充（mihomo 1.19.26+；
+        # 客户端也要认识 gecko：mihomo 1.19.26+ / sing-box 1.14+）
+        echo -e "  $(t mh.hy2.obfs_t1)"
+        echo -e "  $(t mh.hy2.obfs_t2)"
+        local oc; read -rp "$(echo -e "${CYAN}$(t mh.hy2.ask_obfs_type)${NC}")" oc
+        [[ "$oc" == "2" ]] && obfs_type="gecko"
     fi
 
     local node_json
@@ -199,9 +207,11 @@ mh_hy2_add_node() {
         --arg domain "$domain" --arg sni "$sni" \
         --arg cert "$cert_path" --arg key "$key_path" --argjson insec "$insecure" \
         --argjson up "$up" --argjson down "$down" --arg masq "$masq" --arg obfs "$obfs_pass" \
+        --arg otype "$obfs_type" \
         '{tag:$tag, port:$port, password:$pass, domain:$domain, sni:$sni,
           cert_path:$cert, key_path:$key, insecure:$insec, up:$up, down:$down,
-          masquerade:$masq, obfs_pass:$obfs}')
+          masquerade:$masq, obfs_pass:$obfs}
+         | (if $obfs != "" then .obfs_type = $otype else . end)')
 
     local _prev_store; _prev_store=$(_mh_hy2_load)
     _mh_hy2_upsert "$node_json"

@@ -57,6 +57,34 @@ _mh_vless_select_node() {
     MH_VLESS_SEL_TAG="${tags_arr[$((sel-1))]}"
 }
 
+# ── VLESS Encryption (post-quantum) ───────────────────────────────────────────
+# mihomo only prints the raw keys; the strings are the same format Xray uses
+# (checked against `xray vlessenc`): server "…native.600s.<key>", client
+# "…native.0rtt.<key>". x25519 = short links, mlkem768 = PQ auth, ~1.6 KB link.
+mh_vlessenc_gen() {
+    local auth="${1:-x25519}" out k1 k2
+    if [[ "$auth" == "mlkem768" ]]; then
+        out=$("$MH_BIN" generate vless-mlkem768 2>/dev/null) || return 1
+        k1=$(awk -F': ' '/^Seed:/ {print $2}' <<<"$out")
+        k2=$(awk -F': ' '/^Client:/ {print $2}' <<<"$out")
+    else
+        out=$("$MH_BIN" generate vless-x25519 2>/dev/null) || return 1
+        k1=$(awk -F': ' '/^PrivateKey:/ {print $2}' <<<"$out")
+        k2=$(awk -F': ' '/^Password:/ {print $2}' <<<"$out")
+    fi
+    [[ -n "$k1" && -n "$k2" ]] || return 1
+    printf 'mlkem768x25519plus.native.600s.%s\tmlkem768x25519plus.native.0rtt.%s\n' "$k1" "$k2"
+}
+
+mh_ask_vlessenc() {
+    ask_yn "$(t common.vlessenc.ask)" N || return 0
+    echo -e "  $(t common.vlessenc.auth1)" >&2
+    echo -e "  $(t common.vlessenc.auth2)" >&2
+    local c; read -rp "$(echo -e "${CYAN}$(t common.vlessenc.ask_auth)${NC}")" c
+    local auth="x25519"; [[ "$c" == "2" ]] && auth="mlkem768"
+    mh_vlessenc_gen "$auth" || { log_error "$(t common.vlessenc.gen_fail)"; return 1; }
+}
+
 # ── Build mihomo vless listener ───────────────────────────────────────────────
 # users 是 {username, uuid[, flow]}（对象数组）。传输是【顶层字段】而非嵌套块：
 # ws → ws-path，grpc → grpc-service-name，xhttp → xhttp-config。这一点与
@@ -73,10 +101,11 @@ _mh_vless_build_listener() {
     local cert; cert=$(echo "$node_json" | jq -r '.cert_path')
     local key;  key=$(echo "$node_json"  | jq -r '.key_path')
     local listen_addr; listen_addr=$(echo "$node_json" | jq -r '.listen_addr // "0.0.0.0"')
+    local dec; dec=$(echo "$node_json" | jq -r '.vless_decryption // "none"')
 
     jq -n \
         --arg tag "$tag" --argjson p "$port" --arg uuid "$uuid" --arg flow "$flow" \
-        --arg tr "$tr" --arg path "$path" \
+        --arg tr "$tr" --arg path "$path" --arg dec "$dec" \
         --arg cert "$cert" --arg key "$key" --arg listen "$listen_addr" \
     '{
         name: $tag,
@@ -91,7 +120,8 @@ _mh_vless_build_listener() {
      + (if   $tr == "ws"    then { "ws-path": $path }
         elif $tr == "grpc"  then { "grpc-service-name": ($path | ltrimstr("/")) }
         elif $tr == "xhttp" then { "xhttp-config": { path: $path, mode: "auto" } }
-        else {} end)'
+        else {} end)
+     + (if $dec != "none" and $dec != "" then { decryption: $dec } else {} end)'
 }
 
 # ── Apply ─────────────────────────────────────────────────────────────────────
@@ -102,9 +132,13 @@ _mh_vless_apply() {
 
     # 只删本模块管的入站。不能按 type == "vless" 一刀切 —— Reality 节点也是
     # type vless，那是 mihomo/reality.sh 的地盘，删掉会把用户的 Reality 节点抹掉。
+    # 也不能只认 mh-vless- 前缀：psm node add --tag 起的自定义名字会在下次 apply
+    # 时重复追加。非 Reality 的 vless 监听器都归本模块。
     local tmp; tmp=$(mktemp)
-    jq 'del(.listeners[] | select(((.name // "") | startswith("mh-vless-"))))' \
-        "$MH_CFG" > "$tmp" && mv "$tmp" "$MH_CFG"
+    jq 'del(.listeners[] | select(
+        ((.name // "") | startswith("mh-vless-")) or
+        ((.type == "vless") and (has("reality-config") | not))
+    ))' "$MH_CFG" > "$tmp" && mv "$tmp" "$MH_CFG"
 
     local i
     for (( i=0; i<count; i++ )); do
@@ -145,9 +179,10 @@ _mh_vless_uri() {
     # 链接里的 type 用客户端认识的名字：mihomo 内部叫 http，客户端叫 h2。
     local net="$tr"
     # 分开声明与赋值：local 的返回值会盖掉 url_encode 的（SC2155）
-    local enc_sni q
+    local enc_sni q venc
     enc_sni=$(url_encode "$sni") || return 1
-    q="encryption=none&security=tls&sni=${enc_sni}&type=${net}"
+    venc=$(url_encode "$(echo "$node" | jq -r '.vless_encryption // "none"')") || return 1
+    q="encryption=${venc}&security=tls&sni=${enc_sni}&type=${net}"
     [[ -n "$flow" && "$tr" == "tcp" ]] && q="${q}&flow=$(url_encode "$flow")"
     case "$tr" in
         grpc)                 q="${q}&serviceName=$(url_encode "${path#/}")" ;;
@@ -237,6 +272,8 @@ mh_vless_add_node() {
         public_port="$port"
     fi
 
+    local enc_pair; enc_pair=$(mh_ask_vlessenc) || return 1
+
     local node_json
     node_json=$(jq -n \
         --arg tag "$tag" --argjson port "$port" --arg uuid "$uuid" --arg flow "$flow" \
@@ -244,9 +281,12 @@ mh_vless_add_node() {
         --arg domain "$domain" --arg sni "$sni" \
         --arg cert "$cert_path" --arg key "$key_path" --argjson insec "$insecure" \
         --arg listen_addr "$listen_addr" --argjson public_port "$public_port" \
+        --arg pair "$enc_pair" \
         '{tag:$tag, port:$port, public_port:$public_port, uuid:$uuid, flow:$flow,
           transport:$transport, path:$path, domain:$domain, sni:$sni,
-          cert_path:$cert, key_path:$key, insecure:$insec, listen_addr:$listen_addr}')
+          cert_path:$cert, key_path:$key, insecure:$insec, listen_addr:$listen_addr}
+         | (if $pair != "" then ($pair | split("\t")) as $p
+              | .vless_decryption = $p[0] | .vless_encryption = $p[1] else . end)')
 
     local _prev; _prev=$(_mh_vless_load)
     _mh_vless_upsert "$node_json"

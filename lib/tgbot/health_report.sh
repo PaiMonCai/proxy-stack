@@ -36,16 +36,15 @@ EOF
 
 # ── Section builders ──────────────────────────────────────────────────────────
 _hr_section_services() {
-    command -v systemctl &>/dev/null || return 0
-    local lines="" total=0 down=0 entry name svc state
+    _uses_systemd || _uses_openrc || return 0
+    local lines="" total=0 down=0 entry name svc
     for entry in "Xray:xray" "sing-box:sing-box" "mihomo:mihomo" \
                  "Hysteria2:hysteria-server" "ss-rust:ss-rust" "Snell:snell" \
                  "Nginx:nginx"; do
         name="${entry%%:*}"; svc="${entry#*:}"
-        state=$(systemctl show "$svc" --property=LoadState --value 2>/dev/null || true)
-        [[ "$state" == "loaded" ]] || continue
+        svc_exists "$svc" || continue
         total=$(( total + 1 ))
-        if ! systemctl is-active --quiet "$svc" 2>/dev/null; then
+        if ! svc_is_active "$svc" 2>/dev/null; then
             down=$(( down + 1 ))
             lines="${lines}$(t tgbot.hr.svc_down_line "$name" "$svc")"
         fi
@@ -216,6 +215,11 @@ hr_send_report() {
 # ── Systemd timer ───────────────────────────────────────────────────────────
 _hr_install_timer() {
     _hr_load_cfg
+    if ! _uses_systemd; then
+        psm_cron_set psm-health-report "0 $(( 10#${HR_HOUR} )) * * *" "--health-report"
+        log_ok "$(t tgbot.hr.enabled "$HR_HOUR")"
+        return 0
+    fi
     cat > "$HR_SVC" <<EOF
 [Unit]
 Description=PSM Daily Health Report
@@ -249,11 +253,15 @@ EOF
 _hr_uninstall_timer() {
     systemctl disable --now psm-health-report.timer 2>/dev/null || true
     rm -f "$HR_SVC" "$HR_TIMER"
-    systemctl daemon-reload
+    psm_cron_remove psm-health-report
+    svc_daemon_reload
     log_ok "$(t tgbot.hr.disabled)"
 }
 
-_hr_timer_active() { systemctl is-active --quiet psm-health-report.timer 2>/dev/null; }
+_hr_timer_active() {
+    _uses_systemd || { psm_cron_active psm-health-report; return; }
+    systemctl is-active --quiet psm-health-report.timer 2>/dev/null
+}
 
 # ── Wizard / menu ─────────────────────────────────────────────────────────────
 hr_setup_wizard() {

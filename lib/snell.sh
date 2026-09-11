@@ -21,6 +21,7 @@ _snell_check_deps() {
 
 # ── Install ───────────────────────────────────────────────────────────────────
 snell_install() {
+    _uses_systemd || { _snell_native_install install; return; }
     log_step "$(t snell.downloading_install)"
     local tmp; tmp=$(mktemp --suffix=.sh)
     if ! curl -fsSL "$SNELL_INSTALLER" -o "$tmp"; then
@@ -39,6 +40,90 @@ snell_install() {
     else
         log_ok "$(t snell.install_done)"
     fi
+    return 0
+}
+
+# ── Native install (no systemd, e.g. Alpine/OpenRC) ──────────────────────────
+# The upstream snell.sh only writes systemd units, so on OpenRC we fetch the
+# official snell-server directly, write the same snell-main.conf layout the
+# upstream script writes (so show/uninstall/traffic handle both alike) and add
+# an OpenRC service. `update` swaps the binary and keeps the config.
+#
+# Not on musl (Alpine): the official build is a packed static-pie that `file`
+# reports as statically linked, yet it will not start there — exec fails
+# (exit 127), and with gcompat it is "not a valid dynamic program". Tested on
+# Alpine 3.22. Snell on Alpine goes through sing-box (v5/v6) or mihomo (v4/v5).
+SNELL_NATIVE_FALLBACK="v5.0.1"   # used only when the release notes are unreachable
+SNELL_RELEASE_NOTES="https://kb.nssurge.com/surge-knowledge-base/release-notes/snell"
+
+# Latest stable v5 from the official release notes. Download links look like
+# snell-server-v5.0.1-linux-amd64.zip; betas (v5.0.2b1-linux…) don't match.
+_snell_latest_v5() {
+    local v
+    v=$(curl -fsSL --max-time 15 "$SNELL_RELEASE_NOTES" 2>/dev/null \
+        | grep -oE 'snell-server-v5\.[0-9]+\.[0-9]+-linux' \
+        | sed -e 's/^snell-server-//' -e 's/-linux$//' | sort -uV | tail -1)
+    printf '%s' "${v:-$SNELL_NATIVE_FALLBACK}"
+}
+
+_snell_native_install() {
+    local mode="${1:-install}"
+    is_musl && { log_error "$(t common.native.snell_musl)"; return 1; }
+    ensure_pkg_deps curl unzip openssl
+    require_cmd curl unzip openssl
+
+    local zarch
+    case "$(get_arch)" in
+        amd64) zarch="amd64" ;;
+        arm64) zarch="aarch64" ;;
+        arm32) zarch="armv7l" ;;
+    esac
+    local ver; ver=$(_snell_latest_v5)
+    log_step "$(t common.native.installing Snell "$ver")"
+
+    local url="https://dl.nssurge.com/snell/snell-server-${ver}-linux-${zarch}.zip"
+    local tmp; tmp=$(mktemp -d)
+    if ! curl -fsSL -o "$tmp/snell.zip" "$url" \
+        || ! unzip -qo "$tmp/snell.zip" -d "$tmp" \
+        || [[ ! -f "$tmp/snell-server" ]]; then
+        rm -rf "$tmp"
+        log_error "$(t common.native.download_fail "$url")"
+        return 1
+    fi
+    install -m 755 "$tmp/snell-server" "$SNELL_BIN"
+    rm -rf "$tmp"
+
+    if [[ "$mode" == "install" || ! -f "$SNELL_MAIN_CONF" ]]; then
+        mkdir -p "$(dirname "$SNELL_MAIN_CONF")"
+        local listen="0.0.0.0" port psk dns
+        [[ -s /proc/net/if_inet6 ]] && listen="::0"
+        port=$(( RANDOM % 40000 + 20000 ))
+        psk=$(openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | head -c 32)
+        dns=$(awk '/^nameserver/ {print $2}' /etc/resolv.conf 2>/dev/null | paste -sd, -)
+        {
+            echo "#version-choice = v5"
+            echo "[snell-server]"
+            echo "listen = ${listen}:${port}"
+            echo "psk = ${psk}"
+            echo "ipv6 = true"
+            echo "dns = ${dns:-1.1.1.1,8.8.8.8}"
+        } > "$SNELL_MAIN_CONF"
+        chmod 600 "$SNELL_MAIN_CONF"
+    fi
+
+    psm_write_openrc_service "$SNELL_SERVICE" "Snell Server" "$SNELL_BIN" "-c $SNELL_MAIN_CONF" || return 1
+    svc_enable "$SNELL_SERVICE" || true
+    svc_restart "$SNELL_SERVICE" >/dev/null 2>&1 || true
+    sleep 2
+    if ! svc_is_active "$SNELL_SERVICE"; then
+        log_error "$(t common.native.start_fail Snell)"
+        svc_log_tail "$SNELL_SERVICE" 15 >&2
+        return 1
+    fi
+    local p; p=$(awk -F: '/^listen/ { gsub(/[^0-9]/,"",$NF); print $NF; exit }' "$SNELL_MAIN_CONF")
+    declare -f firewall_open_port &>/dev/null && firewall_open_port "$p" both || true
+    log_ok "$(t snell.install_done)"
+    [[ "$mode" == "install" ]] && snell_show_config
     return 0
 }
 
@@ -78,12 +163,13 @@ snell_uninstall() {
     ask_yn "$(t snell.ask_uninstall)" N || return 0
     systemctl stop snell snell.socket snell-netns 2>/dev/null || true
     systemctl disable snell snell.socket snell-netns 2>/dev/null || true
+    psm_remove_openrc_service "$SNELL_SERVICE"
     rm -f /usr/local/bin/snell-server /usr/local/bin/snell
     rm -f /etc/systemd/system/snell.service \
           /etc/systemd/system/snell.socket \
           /etc/systemd/system/snell-netns.service
     rm -rf "$SNELL_CONF_DIR"
-    systemctl daemon-reload
+    svc_daemon_reload
     # Clean up traffic monitoring state (port is stored in state.json, no need to read config first)
     if [[ -f "${CFG_DIR}/traffic/state.json" ]]; then
         source "$LIB_DIR/traffic.sh"; _trf_init; _trf_cleanup_node "snell"
@@ -93,6 +179,7 @@ snell_uninstall() {
 
 # ── Update ────────────────────────────────────────────────────────────────────
 snell_update() {
+    _uses_systemd || { _snell_native_install update; return; }
     log_step "$(t snell.downloading_update)"
     local tmp; tmp=$(mktemp --suffix=.sh)
     if ! curl -fsSL "$SNELL_INSTALLER" -o "$tmp"; then
@@ -142,7 +229,7 @@ snell_diagnose() {
 
 # ── Logs ──────────────────────────────────────────────────────────────────────
 snell_logs() {
-    journalctl -u "$SNELL_SERVICE" -f --no-pager
+    svc_logs "$SNELL_SERVICE"
 }
 
 # ── List helper (called by _view_all_nodes) ───────────────────────────────────

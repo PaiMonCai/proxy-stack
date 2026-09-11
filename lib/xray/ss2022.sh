@@ -143,8 +143,10 @@ _xss_apply_to_xray() {
     (( count == 0 )) && return 0
 
     local tmp; tmp=$(mktemp)
-    # Remove old SS2022 inbounds, then re-add from state
-    jq 'del(.inbounds[] | select(.tag | startswith("xss-")))' "$XRAY_CFG" > "$tmp"
+    # Remove old SS2022 inbounds, then re-add from state. Match on protocol too:
+    # psm node add --tag can pick any name, and a prefix-only match re-appends a
+    # custom-tagged node on every apply ("existing tag found", Xray won't start).
+    jq 'del(.inbounds[] | select(((.tag // "") | startswith("xss-")) or ((.protocol // "") == "shadowsocks")))' "$XRAY_CFG" > "$tmp"
 
     local i
     for (( i=0; i<count; i++ )); do

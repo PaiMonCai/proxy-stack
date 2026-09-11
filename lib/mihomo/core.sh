@@ -11,6 +11,7 @@ MH_BIN="$MIHOMO_BIN"
 MH_CFG_DIR="$MIHOMO_CFG_DIR"
 MH_CFG="$MH_CFG_DIR/config.yaml"
 MH_SERVICE="/etc/systemd/system/mihomo.service"
+MH_ENV="$MH_CFG_DIR/psm.env"          # SAFE_PATHS 等运行时环境，见 _mh_sync_safe_paths
 MH_STORE_DIR="$CFG_DIR/mihomo"        # 各协议节点存储（唯一事实源）
 MH_RELEASES="https://github.com/MetaCubeX/mihomo/releases"
 MH_STABLE_FALLBACK="v1.19.30"   # API 不可达时的兜底，必须是真实存在的稳定 tag
@@ -77,7 +78,8 @@ mh_install() {
     fi
 
     _mh_write_service
-    systemctl daemon-reload
+    svc_daemon_reload
+    _mh_sync_safe_paths
     svc_enable mihomo
     svc_restart mihomo || svc_start mihomo
     log_ok "$(t mh.install_done "$tag")"
@@ -98,6 +100,10 @@ EOF
 }
 
 _mh_write_service() {
+    if ! _uses_systemd; then
+        psm_write_openrc_service mihomo "mihomo Meta service" "$MH_BIN" "-d $MH_CFG_DIR -f $MH_CFG" "$MH_ENV"
+        return
+    fi
     cat > "$MH_SERVICE" <<EOF
 [Unit]
 Description=mihomo Meta service
@@ -109,6 +115,7 @@ User=root
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 NoNewPrivileges=true
+EnvironmentFile=-${MH_ENV}
 ExecStart=${MH_BIN} -d ${MH_CFG_DIR} -f ${MH_CFG}
 Restart=on-failure
 RestartSec=5s
@@ -117,6 +124,37 @@ LimitNOFILE=1048576
 [Install]
 WantedBy=multi-user.target
 EOF
+}
+
+# mihomo 只读自己 home（-d 目录）或 SAFE_PATHS 下的文件。证书放在 /etc/nginx/ssl、
+# acme.sh 目录或任意 --cert-path 时，监听器起不来 —— mihomo -t 查不出来，开了
+# VLESS Encryption 还会在出错路径上空指针 panic，把全部监听器一起拖垮。
+# 这里把配置引用的证书目录同步进 $MH_ENV（systemd EnvironmentFile / OpenRC 脚本都加载它），
+# 并顺带把还没引用 $MH_ENV 的旧服务定义迁移过来。
+_mh_sync_safe_paths() {
+    local path dir seen=":" list=()
+    while IFS= read -r path; do
+        dir=$(dirname "$path")
+        [[ "$dir" == "$MH_CFG_DIR" || "$dir" == "$MH_CFG_DIR"/* ]] && continue
+        [[ "$seen" == *":${dir}:"* ]] && continue
+        seen="${seen}${dir}:"; list+=("$dir")
+    done < <(jq -r '.listeners[]? | (.certificate?, ."private-key"?) | strings | select(startswith("/"))' \
+                 "$MH_CFG" 2>/dev/null)
+
+    local want="" have=""
+    (( ${#list[@]} )) && want="SAFE_PATHS=\"$(IFS=:; echo "${list[*]}")\""
+    [[ -f "$MH_ENV" ]] && have=$(<"$MH_ENV")
+    if [[ -z "$want" ]]; then
+        rm -f "$MH_ENV"
+    elif [[ "$want" != "$have" ]]; then
+        printf '%s\n' "$want" > "$MH_ENV" && chmod 600 "$MH_ENV"
+    fi
+
+    local def="$MH_SERVICE"; _uses_systemd || def="/etc/init.d/mihomo"
+    if [[ -f "$def" ]] && ! grep -qF "$MH_ENV" "$def"; then
+        _mh_write_service && svc_daemon_reload
+    fi
+    return 0
 }
 
 # ── Key / id generation ───────────────────────────────────────────────────────
@@ -200,7 +238,7 @@ mh_uninstall() {
     ask_yn "$(t mh.ask_uninstall)" N || return 0
 
     svc_stop mihomo 2>/dev/null || true
-    systemctl disable mihomo --quiet 2>/dev/null || true
+    svc_disable mihomo || true
 
     # 清理各协议节点的流量记录（节点存储随目录一并删除）
     source "$LIB_DIR/traffic.sh" 2>/dev/null || true
@@ -229,9 +267,10 @@ mh_uninstall() {
                     "$MH_STORE_DIR/anytls.json" 2>/dev/null)
     fi
 
+    psm_remove_openrc_service mihomo
     rm -f  "$MH_BIN" "$MH_SERVICE"
     rm -rf "$MH_CFG_DIR" "$MH_STORE_DIR"
-    systemctl daemon-reload
+    svc_daemon_reload
 
     log_ok "$(t mh.uninstalled)"
 }
@@ -279,6 +318,7 @@ mh_test_restart() {
     local test_out
     if test_out=$("$MH_BIN" -t -d "$MH_CFG_DIR" -f "$MH_CFG" 2>&1); then
         rm -f "${MH_CFG}.prev"
+        _mh_sync_safe_paths
         svc_restart mihomo && { log_ok "$(t mh.restarted)"; return 0; }
         log_error "$(t mh.restart_fail)"
         return 1
@@ -341,7 +381,7 @@ mh_version() {
 }
 
 mh_logs() {
-    journalctl -u mihomo -f --no-pager
+    svc_logs mihomo
 }
 
 # ── Post-install protocol wizard ─────────────────────────────────────────────

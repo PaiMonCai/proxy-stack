@@ -602,9 +602,17 @@ rwd_status() {
 }
 
 # ── Systemd timer ───────────────────────────────────────────────────────────────
-_rwd_timer_active() { systemctl is-active --quiet psm-reality-watchdog.timer 2>/dev/null; }
+_rwd_timer_active() {
+    _uses_systemd || { psm_cron_active psm-reality-watchdog; return; }
+    systemctl is-active --quiet psm-reality-watchdog.timer 2>/dev/null
+}
 
 _rwd_install_timer() {
+    if ! _uses_systemd; then
+        psm_cron_set psm-reality-watchdog "*/10 * * * *" "--reality-watchdog"
+        log_ok "$(t xray.rwd.timer_installed)"
+        return 0
+    fi
     cat > "$PSM_RWD_SVC" <<EOF
 [Unit]
 Description=PSM Reality Camouflage-Target Watchdog
@@ -639,7 +647,8 @@ EOF
 _rwd_uninstall_timer() {
     systemctl disable --now psm-reality-watchdog.timer 2>/dev/null || true
     rm -f "$PSM_RWD_SVC" "$PSM_RWD_TIMER"
-    systemctl daemon-reload
+    psm_cron_remove psm-reality-watchdog
+    svc_daemon_reload
     log_ok "$(t xray.rwd.timer_removed)"
 }
 

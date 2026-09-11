@@ -92,6 +92,11 @@ docker_install() {
     fi
     detect_os
     case "$OS_ID" in
+        alpine)
+            # get.docker.com does not support Alpine; its own repo ships Docker + compose
+            log_step "$(t common.pkg.installing "docker docker-cli-compose")"
+            pkg_install docker docker-cli-compose || { log_error "$(t docker.install.failed)"; return 1; }
+            ;;
         amzn)
             log_step "$(t docker.install.amzn)"
             pkg_install docker || { log_error "$(t docker.install.failed)"; return 1; }

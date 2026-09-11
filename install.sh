@@ -11,7 +11,7 @@ source "$LIB_DIR/common.sh"
 require_root
 
 banner() {
-    clear
+    clear 2>/dev/null || true   # no TERM (cloud-init / piped install) → clear fails, and set -e would abort
     local BC='\033[96m' BB='\033[94m' WH='\033[97m' DM='\033[2m'
     local L1='     _    ___          ____    ____    __  __ '
     local L2='    | |  / _ \        |  _ \  / ___| |  \/  |'
@@ -45,6 +45,8 @@ install_base_packages() {
     # 否则 dnf 的严格模式会因为一个包不可用而放弃整个事务（curl/jq 也装不上）。
     detect_os
     [[ "$PKG_MGR" == "yum" ]] && { ensure_epel || true; }
+    # Alpine：先换上 GNU 基础工具，后面所有模块才能和 Debian 上行为一致。
+    ensure_alpine_base
     # ensure_pkg_deps 逐个安装：任何一个包失败都不影响其余的。
     ensure_pkg_deps curl wget unzip jq openssl socat qrencode
     # 这些是 PSM 运行的硬性依赖，缺了直接失败并给出明确指引。

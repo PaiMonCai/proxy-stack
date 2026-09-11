@@ -91,13 +91,22 @@ sb_install() {
     _sb_warn_feature_downgrade "$tag" || return 0
 
     local ver="${tag#v}"
-    local tarball="sing-box-${ver}-linux-${sb_arch}.tar.gz"
+    # Alpine 是 musl：普通 linux 包是 glibc 动态链接的，在那里根本 exec 不了，
+    # 必须下 -musl 包。个别没有 -musl 资产的 release 再退回普通包。
+    local libc_suffix=""
+    is_musl && libc_suffix="-musl"
+    local tarball="sing-box-${ver}-linux-${sb_arch}${libc_suffix}.tar.gz"
     local url="${SB_RELEASES}/download/${tag}/${tarball}"
     local tmp_dir; tmp_dir=$(mktemp -d)
 
     log_step "$(t sb.downloading "$tag" "$sb_arch")"
-    curl -fsSL -o "$tmp_dir/$tarball" "$url" \
-        || { rm -rf "$tmp_dir"; die "$(t sb.download_fail "$url")"; }
+    curl -fsSL -o "$tmp_dir/$tarball" "$url" || {
+        [[ -n "$libc_suffix" ]] || { rm -rf "$tmp_dir"; die "$(t sb.download_fail "$url")"; }
+        tarball="sing-box-${ver}-linux-${sb_arch}.tar.gz"
+        url="${SB_RELEASES}/download/${tag}/${tarball}"
+        curl -fsSL -o "$tmp_dir/$tarball" "$url" \
+            || { rm -rf "$tmp_dir"; die "$(t sb.download_fail "$url")"; }
+    }
 
     tar -xzf "$tmp_dir/$tarball" -C "$tmp_dir" \
         || { rm -rf "$tmp_dir"; die "$(t sb.extract_fail)"; }
@@ -126,7 +135,7 @@ sb_install() {
     fi
 
     _sb_write_service
-    systemctl daemon-reload
+    svc_daemon_reload
     svc_enable sing-box
     svc_restart sing-box || svc_start sing-box
     log_ok "$(t sb.install_done "$tag")"
@@ -157,6 +166,10 @@ EOF
 }
 
 _sb_write_service() {
+    if ! _uses_systemd; then
+        psm_write_openrc_service sing-box "sing-box service" "$SB_BIN" "run -c $SB_CFG"
+        return
+    fi
     cat > "$SB_SERVICE" <<EOF
 [Unit]
 Description=sing-box service
@@ -256,7 +269,7 @@ sb_uninstall() {
     ask_yn "$(t sb.ask_uninstall)" N || return 0
 
     svc_stop sing-box 2>/dev/null || true
-    systemctl disable sing-box --quiet 2>/dev/null || true
+    svc_disable sing-box || true
 
     # 清理各协议节点的流量记录（节点存储随目录一并删除）
     source "$LIB_DIR/traffic.sh" 2>/dev/null || true
@@ -285,9 +298,10 @@ sb_uninstall() {
                     "$SB_STORE_DIR/anytls.json" 2>/dev/null)
     fi
 
+    psm_remove_openrc_service sing-box
     rm -f  "$SB_BIN" "$SB_SERVICE"
     rm -rf "$SB_CFG_DIR" "$SB_STORE_DIR"
-    systemctl daemon-reload
+    svc_daemon_reload
 
     log_ok "$(t sb.uninstalled)"
 }
@@ -397,7 +411,7 @@ sb_version() {
 }
 
 sb_logs() {
-    journalctl -u sing-box -f --no-pager
+    svc_logs sing-box
 }
 
 # ── Post-install protocol wizard ─────────────────────────────────────────────

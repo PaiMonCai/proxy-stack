@@ -78,6 +78,8 @@ detect_os() {
     fi
 
     case "$OS_ID" in
+        alpine)
+            PKG_MGR="apk" ;;
         ubuntu|debian|raspbian)
             PKG_MGR="apt-get" ;;
         centos|rhel|fedora|rocky|almalinux|ol|amzn)
@@ -87,6 +89,7 @@ detect_os() {
             case "${ID_LIKE:-}" in
                 *debian*|*ubuntu*) PKG_MGR="apt-get" ;;
                 *rhel*|*centos*|*fedora*) PKG_MGR="yum" ;;
+                *alpine*) PKG_MGR="apk" ;;
             *) die "$(t common.err.unsupported_distro "$OS_ID")" ;;
             esac
             ;;
@@ -103,6 +106,7 @@ pkg_install() {
     case "$PKG_MGR" in
         apt-get) DEBIAN_FRONTEND=noninteractive apt-get install -y "$@" ;;
         yum)     "$(_rhel_pkg_cmd)" install -y "$@" ;;
+        apk)     apk add --no-cache "$@" ;;
     esac
 }
 
@@ -111,6 +115,9 @@ pkg_update() {
     case "$PKG_MGR" in
         apt-get) apt-get update -qq ;;
         yum)     "$(_rhel_pkg_cmd)" makecache -q 2>/dev/null || "$(_rhel_pkg_cmd)" makecache ;;
+        # `apk add --no-cache` refreshes its own index, so no separate cache
+        # update (and no stale index left in an Alpine image) is needed.
+        apk)     : ;;
     esac
 }
 
@@ -176,6 +183,23 @@ ensure_epel() {
 # (RHEL ships it as "cronie"), in which case /etc/cron.d/psm-* files are never
 # executed. Install + enable the distro's daemon before relying on them.
 ensure_cron() {
+    detect_os
+    if [[ "$PKG_MGR" == "apk" ]]; then
+        # Alpine's default busybox crond never reads /etc/cron.d. cronie does,
+        # and it also runs /etc/crontabs/root (acme.sh's renewal entry), so it
+        # replaces busybox crond outright instead of running next to it.
+        svc_is_active cronie && return 0
+        log_step "$(t common.cron.installing)"
+        pkg_install cronie &>/dev/null || true
+        svc_stop crond &>/dev/null || true
+        svc_disable crond || true
+        if _svc_enable_now cronie; then
+            log_ok "$(t common.cron.enabled cronie)"
+            return 0
+        fi
+        log_warn "$(t common.cron.failed)"
+        return 1
+    fi
     if command -v crontab &>/dev/null \
         && { svc_is_active cron 2>/dev/null || svc_is_active crond 2>/dev/null \
              || svc_is_active cronie 2>/dev/null; }; then
@@ -189,8 +213,7 @@ ensure_cron() {
     esac
     local svc
     for svc in cron crond cronie; do
-        if systemctl list-unit-files "${svc}.service" &>/dev/null \
-            && systemctl enable --now "$svc" &>/dev/null; then
+        if _svc_enable_now "$svc"; then
             log_ok "$(t common.cron.enabled "$svc")"
             return 0
         fi
@@ -210,6 +233,10 @@ get_arch() {
     esac
 }
 
+# musl libc (Alpine). Release binaries linked against glibc cannot exec there
+# ("required file not found"), so downloaders pick a -musl/static build.
+is_musl() { compgen -G '/lib/ld-musl-*.so.1' >/dev/null; }
+
 # ── Network ───────────────────────────────────────────────────────────────────
 get_ipv4() {
     curl -s4 --max-time 5 https://api.ipify.org 2>/dev/null \
@@ -224,13 +251,199 @@ get_ipv6() {
 has_ipv6() { [[ -n "$(get_ipv6)" ]]; }
 
 # ── Service helpers ───────────────────────────────────────────────────────────
-svc_enable()  { systemctl enable  "$1" --quiet 2>/dev/null; }
-svc_start()   { systemctl start   "$1"; }
-svc_stop()    { systemctl stop    "$1"; }
-svc_restart() { systemctl restart "$1"; }
-svc_reload()  { systemctl reload  "$1" 2>/dev/null || systemctl restart "$1"; }
-svc_status()  { systemctl status  "$1" --no-pager -l; }
-svc_is_active(){ systemctl is-active --quiet "$1"; }
+# Two init systems are supported: systemd (Debian/Ubuntu/RHEL family) and
+# OpenRC (Alpine). /run/systemd/system is systemd's own "booted with systemd"
+# marker (what sd_booted() checks). The answer is cached: these helpers run in
+# loops, and it cannot change while PSM is running.
+_psm_detect_init() {
+    [[ -n "${_PSM_INIT:-}" ]] && return 0
+    if [[ -d /run/systemd/system ]] && command -v systemctl &>/dev/null; then
+        _PSM_INIT=systemd
+    elif command -v openrc-run &>/dev/null && command -v rc-service &>/dev/null; then
+        _PSM_INIT=openrc
+    else
+        _PSM_INIT=none
+    fi
+}
+_uses_systemd() { _psm_detect_init; [[ "$_PSM_INIT" == "systemd" ]]; }
+_uses_openrc()  { _psm_detect_init; [[ "$_PSM_INIT" == "openrc" ]]; }
+
+_svc_enable_now() {
+    local svc="$1"
+    if _uses_systemd; then
+        systemctl enable --now "$svc" &>/dev/null
+    elif _uses_openrc; then
+        [[ -x "/etc/init.d/${svc}" ]] || return 1
+        rc-update add "$svc" default &>/dev/null || true
+        rc-service "$svc" start &>/dev/null
+    else
+        return 1
+    fi
+}
+svc_enable() {
+    if _uses_systemd; then systemctl enable "$1" --quiet 2>/dev/null
+    else rc-update add "$1" default &>/dev/null; fi
+}
+svc_disable() {
+    if _uses_systemd; then systemctl disable "$1" --quiet 2>/dev/null
+    else rc-update del "$1" default &>/dev/null; fi
+}
+svc_start()   { if _uses_systemd; then systemctl start   "$1"; else rc-service "$1" start;   fi; }
+svc_stop()    { if _uses_systemd; then systemctl stop    "$1"; else rc-service "$1" stop;    fi; }
+# reset-failed first: every node change restarts the core, and systemd's default
+# start limit (5 starts / 10 s) otherwise locks the unit into "start-limit-hit"
+# after a handful of quick changes (measured with `psm node add` in a loop) —
+# every later change then fails although the config is valid.
+svc_restart() {
+    if _uses_systemd; then systemctl reset-failed "$1" 2>/dev/null; systemctl restart "$1"
+    else rc-service "$1" restart; fi
+}
+svc_reload() {
+    if _uses_systemd; then systemctl reload "$1" 2>/dev/null || systemctl restart "$1"
+    else rc-service "$1" reload 2>/dev/null || rc-service "$1" restart; fi
+}
+svc_status() {
+    if _uses_systemd; then systemctl status "$1" --no-pager -l
+    else rc-service "$1" status; fi
+}
+svc_is_active() {
+    if _uses_systemd; then systemctl is-active --quiet "$1"; return; fi
+    rc-service "$1" status &>/dev/null || return 1
+    # supervise-daemon keeps reporting "started" for as long as it is retrying a
+    # child that dies on start (measured: >20s of "started" with no child). Its
+    # pidfile holds the supervisor, not the service, so require a live child.
+    # Distro daemons (nginx, cron …) are not supervised and pass straight through.
+    local sup; sup=$(cat "/run/$1.pid" 2>/dev/null) || return 0
+    [[ "$(cat "/proc/${sup}/comm" 2>/dev/null)" == supervise-daemo* ]] || return 0
+    pgrep -P "$sup" >/dev/null 2>&1
+}
+# Enabled = starts at boot (systemd: is-enabled; OpenRC: in the default runlevel).
+svc_is_enabled() {
+    if _uses_systemd; then systemctl is-enabled --quiet "$1" 2>/dev/null
+    else [[ -e "/etc/runlevels/default/$1" ]]; fi
+}
+# Exists = the init system knows the service (a unit is loaded / an init script is present).
+svc_exists() {
+    if _uses_systemd; then [[ "$(systemctl show "$1" --property=LoadState --value 2>/dev/null)" == "loaded" ]]
+    else [[ -x "/etc/init.d/$1" ]]; fi
+}
+svc_daemon_reload() {
+    if _uses_systemd; then systemctl daemon-reload || true; fi
+    return 0
+}
+
+# OpenRC has no journal: services written by psm_write_openrc_service send
+# stdout+stderr here instead, and svc_logs / svc_log_tail read it back.
+_svc_log_file() { printf '/var/log/psm/%s.log' "$1"; }
+
+# Write an OpenRC service for a PSM-managed daemon (the OpenRC counterpart of
+# the systemd units the modules write). command_args is one string because
+# openrc-run word-splits it itself.
+psm_write_openrc_service() {
+    # [env_file]：可选，存在时整份导出给守护进程（systemd 的 EnvironmentFile=- 同义）
+    local name="$1" description="$2" command="$3" command_args="$4" env_file="${5:-}" env_line=""
+    _uses_openrc || { log_error "$(t common.err.need_init "$name")"; return 1; }
+    [[ -n "$env_file" ]] && env_line="[ -f \"${env_file}\" ] && { set -a; . \"${env_file}\"; set +a; }"
+    cat > "/etc/init.d/${name}" <<EOF
+#!/sbin/openrc-run
+# Managed by PSM
+description="${description}"
+command="${command}"
+command_args="${command_args}"
+command_user="root"
+pidfile="/run/${name}.pid"
+supervisor="supervise-daemon"
+supervise_daemon_args="--respawn-delay 5"
+output_log="$(_svc_log_file "$name")"
+error_log="$(_svc_log_file "$name")"
+rc_ulimit="-n 1048576"
+# Append, never replace: openrc-run puts its own helpers (checkpath, einfo, …) on PATH.
+export PATH="\${PATH}:/usr/local/sbin:/usr/local/bin"
+${env_line}
+
+depend() {
+    need net
+    after firewall
+}
+
+start_pre() {
+    checkpath -d -m 0755 /var/log/psm
+}
+EOF
+    chmod 755 "/etc/init.d/${name}"
+}
+
+psm_remove_openrc_service() {
+    local name="$1"
+    _uses_openrc || return 0
+    svc_stop "$name" &>/dev/null || true
+    svc_disable "$name" &>/dev/null || true
+    rm -f "/etc/init.d/${name}" "$(_svc_log_file "$name")"
+}
+
+svc_logs() {
+    local name="$1" file
+    if _uses_systemd; then
+        journalctl -u "$name" -f --no-pager
+        return
+    fi
+    file=$(_svc_log_file "$name")
+    if [[ -f "$file" ]]; then
+        tail -n 50 -F "$file"
+    else
+        log_warn "$(t common.svc.no_log "$name" "$file")"
+        return 1
+    fi
+}
+
+# Last <n> log lines of a service, non-following (for error reports).
+svc_log_tail() {
+    local name="$1" n="${2:-15}"
+    if _uses_systemd; then
+        journalctl -u "$name" -n "$n" --no-pager 2>/dev/null || true
+    else
+        tail -n "$n" "$(_svc_log_file "$name")" 2>/dev/null || true
+    fi
+}
+
+# ── Periodic jobs without systemd timers ─────────────────────────────────────
+# The modules keep their systemd timers as-is; on OpenRC the same manager.sh
+# entry point runs from an /etc/cron.d drop-in instead (see ensure_cron).
+psm_cron_set() {
+    local name="$1" spec="$2" args="$3"
+    ensure_cron || true
+    mkdir -p /etc/cron.d
+    cat > "/etc/cron.d/${name}" <<EOF
+# Managed by PSM
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+${spec} root ${PSM_ROOT}/manager.sh ${args} >/dev/null 2>&1
+EOF
+    chmod 644 "/etc/cron.d/${name}"
+}
+psm_cron_remove() { rm -f "/etc/cron.d/$1"; }
+psm_cron_active() { [[ -f "/etc/cron.d/$1" ]]; }
+
+# ── Firewall persistence ─────────────────────────────────────────────────────
+# Save the live iptables rules so they survive a reboot:
+#   Alpine      : `rc-service iptables save` → /etc/iptables/rules-save, which the
+#                 iptables service loads at boot (so that service is enabled too)
+#   RHEL family : /etc/sysconfig/iptables (the dir always exists there)
+#   Debian      : /etc/iptables/rules.v4 (what iptables-persistent restores)
+psm_iptables_persist() {
+    if _uses_openrc && [[ -x /etc/init.d/iptables ]]; then
+        local s
+        for s in iptables ip6tables; do
+            [[ -x "/etc/init.d/$s" ]] || continue
+            rc-service "$s" save &>/dev/null || true
+            svc_enable "$s" || true
+        done
+        return 0
+    fi
+    [[ -d /etc/sysconfig ]] || mkdir -p /etc/iptables 2>/dev/null || true
+    iptables-save  > /etc/sysconfig/iptables 2>/dev/null \
+        || iptables-save  > /etc/iptables/rules.v4 2>/dev/null || true
+    ip6tables-save > /etc/iptables/rules.v6  2>/dev/null || true
+}
 
 # ── Prompts ───────────────────────────────────────────────────────────────────
 ask() {
@@ -241,6 +454,19 @@ ask() {
     read -rp "$(echo -e "${CYAN}${prompt}${hint}: ${NC}")" val
     [[ -z "$val" && -n "$default" ]] && val="$default"
     printf -v "$var" '%s' "$val"
+}
+
+# ask_hy2_obfs_pass <var_name> <prompt>
+# Hysteria2 混淆密码：默认随机 16 位；Xray 的 salamander 要求 ≥4 字节，
+# 太短会让整个 Xray 起不来，三个核心统一按这个下限重问。
+ask_hy2_obfs_pass() {
+    local _hy2_var="$1" _hy2_prompt="$2" _hy2_pw
+    while :; do
+        ask _hy2_pw "$_hy2_prompt" "$(rand_str 16)"
+        (( ${#_hy2_pw} >= 4 )) && break
+        log_warn "$(t common.hy2.obfs_too_short)"
+    done
+    printf -v "$_hy2_var" '%s' "$_hy2_pw"
 }
 
 ask_yn() {
@@ -395,6 +621,9 @@ nginx_test_reload() {
 }
 
 xray_test_restart() {
+    # xray_rebuild_from_stores runs every module's apply in a row and tests the
+    # finished config once; testing each half-rebuilt intermediate would fail.
+    [[ -n "${PSM_XRAY_DEFER_RESTART:-}" ]] && return 0
     local test_out
     if test_out=$("$XRAY_BIN" run -test -config "$XRAY_CFG_DIR/config.json" 2>&1) \
         || test_out=$("$XRAY_BIN" -test -config "$XRAY_CFG_DIR/config.json" 2>&1); then
@@ -420,6 +649,14 @@ require_cmd() {
 
 is_installed() { command -v "$1" &>/dev/null; }
 
+# Package providing command <cmd>, where a distro names it differently.
+_pkg_name() {
+    case "${PKG_MGR}:$1" in
+        apk:qrencode) echo "libqrencode-tools" ;;
+        *)            echo "$1" ;;
+    esac
+}
+
 ensure_pkg_deps() {
     # ensure_pkg_deps <pkg1> [pkg2] ... — install any whose binary is missing.
     # Installs ONE AT A TIME on purpose: apt/dnf abort the whole transaction if
@@ -435,14 +672,14 @@ ensure_pkg_deps() {
 
     log_step "$(t common.pkg.installing "${missing[*]}")"
     local failed=() epel_tried=0
+    detect_os
     for pkg in "${missing[@]}"; do
-        pkg_install "$pkg" &>/dev/null && continue
-        detect_os
+        pkg_install "$(_pkg_name "$pkg")" &>/dev/null && continue
         if [[ "$PKG_MGR" == "yum" && $epel_tried -eq 0 ]]; then
             epel_tried=1
             ensure_epel || true
         fi
-        pkg_install "$pkg" &>/dev/null && continue
+        pkg_install "$(_pkg_name "$pkg")" &>/dev/null && continue
         failed+=("$pkg")
     done
 
@@ -453,6 +690,26 @@ ensure_pkg_deps() {
         # this as best-effort; hard requirements are enforced via require_cmd.
         log_warn "$(t common.pkg.install_fail "${failed[*]}")"
     fi
+    return 0
+}
+
+# Alpine ships busybox applets where PSM relies on GNU behaviour (date -d
+# "now +1 month", mktemp --suffix, ps -C, grep -P, ss, …) and ships no zoneinfo.
+# Installing the GNU userland once makes every module behave as it does on
+# Debian. procps-ng was named procps before Alpine 3.19, hence the fallback.
+ensure_alpine_base() {
+    detect_os
+    [[ "$PKG_MGR" == "apk" ]] || return 0
+    log_step "$(t common.alpine.base_installing)"
+    local failed=() pkg
+    for pkg in bash coreutils findutils grep sed gawk procps-ng iproute2 \
+               util-linux tzdata ca-certificates iptables ip6tables; do
+        apk info -e "$pkg" &>/dev/null && continue
+        pkg_install "$pkg" &>/dev/null && continue
+        [[ "$pkg" == "procps-ng" ]] && pkg_install procps &>/dev/null && continue
+        failed+=("$pkg")
+    done
+    (( ${#failed[@]} == 0 )) || log_warn "$(t common.pkg.install_fail "${failed[*]}")"
     return 0
 }
 

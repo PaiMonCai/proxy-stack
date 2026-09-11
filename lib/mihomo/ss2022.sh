@@ -89,6 +89,24 @@ _mh_ss_gen_password() {
     openssl rand -base64 "$bytes" | tr -d '\n'
 }
 
+# ── ShadowTLS v3 prompt (shared with mihomo/snell.sh) ────────────────────────
+# Prints "<handshake-sni>\t<password>", or nothing when declined. Unauthenticated
+# connections are relayed to <sni>:443 as-is — the same free-relay risk as a
+# REALITY dest on a shared CDN frontend, so the same check runs here.
+_mh_ask_shadowtls() {
+    ask_yn "$(t mh.stls.ask)" N || return 0
+    local sni=""
+    while [[ -z "$sni" ]]; do
+        ask sni "$(t mh.stls.ask_sni)" ""
+        [[ -n "$sni" ]] || log_error "$(t mh.stls.sni_empty)"
+    done
+    if reality_dest_is_shared_frontend "$sni" 443; then
+        log_warn "$(t mh.stls.shared_warn "$sni")"
+        ask_yn "$(t common.reality.proceed_anyway)" N || return 1
+    fi
+    printf '%s\t%s\n' "$sni" "$(rand_str 24)"
+}
+
 # ── Build mihomo shadowsocks listener ────────────────────────────────────────
 _mh_ss_build_listener() {
     local node_json="$1"
@@ -97,10 +115,15 @@ _mh_ss_build_listener() {
     local method; method=$(echo "$node_json" | jq -r '.method')
     local pass;   pass=$(echo "$node_json"   | jq -r '.password')
     local listen; listen=$(echo "$node_json" | jq -r '.listen // "::"')
+    # ShadowTLS v3（mihomo 1.19.28+ 的 listener 自带）：先与 <sni>:443 完成真实 TLS
+    # 握手，认证通过后才交给 SS；未认证的连接原样转发到握手目标。
+    local spw;  spw=$(echo "$node_json"  | jq -r '.stls_password // ""')
+    local ssni; ssni=$(echo "$node_json" | jq -r '.stls_sni // ""')
 
     jq -n \
         --arg tag "$tag" --argjson p "$port" \
         --arg method "$method" --arg pass "$pass" --arg listen "$listen" \
+        --arg spw "$spw" --arg ssni "$ssni" \
     '{
         name: $tag,
         type: "shadowsocks",
@@ -109,7 +132,10 @@ _mh_ss_build_listener() {
         cipher: $method,
         password: $pass,
         udp: true
-    }'
+    }
+    + (if $spw != "" then { "shadow-tls": { enable: true, version: 3,
+            users: [ { name: "u1", password: $spw } ],
+            handshake: { dest: ($ssni + ":443") } } } else {} end)'
 }
 
 # ── Apply all SS2022 nodes into mihomo config ───────────────────────────────
@@ -152,6 +178,35 @@ _mh_ss_uri() {
     pass=$(echo "$node"   | jq -r '.password')
 
     local ip; ip=$(get_ipv4)
+
+    # ShadowTLS 节点没有被客户端普遍认可的 URI 写法，给一条不带插件的 ss:// 反而会
+    # 让客户端直连一个它握不上的端口。输出 Clash / Surge 配置片段。
+    local spw;  spw=$(echo "$node"  | jq -r '.stls_password // ""')
+    local ssni; ssni=$(echo "$node" | jq -r '.stls_sni // ""')
+    if [[ -n "$spw" ]]; then
+        echo -e "\n${BOLD}${GREEN}── mihomo SS2022 + ShadowTLS v3: ${tag} ──${NC}"
+        echo -e "  ${YELLOW}$(t mh.stls.no_uri)${NC}\n"
+        echo -e "${BOLD}$(t mh.stls.surge_label):${NC}"
+        echo "  PSM-${tag} = ss, ${ip}, ${port}, encrypt-method=${method}, password=${pass}, shadow-tls-password=${spw}, shadow-tls-sni=${ssni}, shadow-tls-version=3"
+        echo -e "\n${BOLD}$(t mh.stls.clash_label):${NC}"
+        cat <<EOF
+proxies:
+  - name: PSM-${tag}
+    type: ss
+    server: ${ip}
+    port: ${port}
+    cipher: ${method}
+    password: "${pass}"
+    plugin: shadow-tls
+    client-fingerprint: chrome
+    plugin-opts:
+      host: "${ssni}"
+      password: "${spw}"
+      version: 3
+EOF
+        return 0
+    fi
+
     local userinfo; userinfo=$(printf '%s:%s' "$method" "$pass" | base64 -w 0 | tr '+/' '-_' | tr -d '=')
     local uri="ss://${userinfo}@${ip}:${port}#${tag}"
 
@@ -199,12 +254,15 @@ mh_ss_add_node() {
     [[ "$tag" =~ ^mh-ss- ]] || tag="mh-ss-${tag}"
 
     local pass; pass=$(_mh_ss_gen_password "$method")
+    local stls; stls=$(_mh_ask_shadowtls) || return 1
 
     local node_json
     node_json=$(jq -n \
         --arg tag "$tag" --argjson p "$port" \
-        --arg method "$method" --arg pass "$pass" --arg listen "$listen" \
-        '{tag: $tag, port: $p, method: $method, password: $pass, listen: $listen}')
+        --arg method "$method" --arg pass "$pass" --arg listen "$listen" --arg stls "$stls" \
+        '{tag: $tag, port: $p, method: $method, password: $pass, listen: $listen}
+         | (if $stls != "" then ($stls | split("\t")) as $s
+              | .stls_sni = $s[0] | .stls_password = $s[1] else . end)')
 
     local _prev_store; _prev_store=$(_mh_ss_load)
     _mh_ss_upsert "$node_json"

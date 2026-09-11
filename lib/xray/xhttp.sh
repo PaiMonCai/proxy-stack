@@ -75,6 +75,30 @@ _show_node_list() {
     done
 }
 
+# mKCP 的 seed / 伪装头写法在 Xray 里改过两次，且互不兼容（均用真实内核实测）：
+#   v26.3.27：kcpSettings.seed/header 被拒，只认 finalmask 的 mkcp-aes128gcm / header-* / mkcp-original
+#   v26.9.9 ：kcpSettings.seed/header 又能用了，mkcp-aes128gcm 反倒成了「unknown config id」
+# 中间版本的边界没法逐个确认，所以直接问本机装的 Xray：旧写法过得了 -test 就用旧写法，
+# 否则用 finalmask。每个进程只探测一次；没装 Xray（测试、离线生成）时按旧写法。
+_xray_kcp_legacy_ok() {
+    if [[ -z "${_XRAY_KCP_LEGACY:-}" ]]; then
+        _XRAY_KCP_LEGACY=1
+        if [[ -x "${XRAY_BIN:-}" ]]; then
+            # Xray picks the config format from the file extension: a bare mktemp
+            # name is rejected on every version, which made this probe always
+            # answer "finalmask" (right on v26.3.27 by luck, wrong on v26.9.9).
+            local d; d=$(mktemp -d)
+            jq -n '{inbounds: [{port: 1, protocol: "vless", settings: {clients: [], decryption: "none"},
+                     streamSettings: {network: "kcp", security: "none",
+                                      kcpSettings: {seed: "probe", header: {type: "srtp"}}}}],
+                    outbounds: [{protocol: "freedom"}]}' > "$d/probe.json"
+            "$XRAY_BIN" run -test -config "$d/probe.json" &>/dev/null || _XRAY_KCP_LEGACY=0
+            rm -rf "$d"
+        fi
+    fi
+    [[ "$_XRAY_KCP_LEGACY" == "1" ]]
+}
+
 # ── Build inbound ─────────────────────────────────────────────────────────────
 _xhttp_build_inbound() {
     local n="$1"
@@ -129,11 +153,14 @@ _xhttp_build_inbound() {
                    "tlsSettings": ($tls + { "alpn": ["http/1.1"] }) }')
             ;;
         h2)
-            # HTTP/2：host 是数组（Xray 的 httpSettings 允许多个虚拟主机名）。
-            # alpn 必须只有 h2，混进 http/1.1 会让客户端协商到 1.1 后连不上。
+            # HTTP/2。Xray 已移除旧的 HTTP 传输（network=http 会被整份配置拒绝：
+            # "HTTP transport … has been removed and migrated to XHTTP stream-one"），
+            # 所以改由 XHTTP 的 stream-one 模式承载，v26.3.27 与 v26.9.9 均实测通过。
+            # 模式名保留 h2：store 里的老节点下次 apply 自动迁移，但客户端需重新导入链接。
+            # alpn 只给 h2，混进 http/1.1 会让客户端协商到 1.1。
             stream_json=$(jq -n --arg path "$path" --arg host "$domain" --argjson tls "$tls_common" \
-                '{ "network": "http", "security": "tls",
-                   "httpSettings": { "path": $path, "host": [$host] },
+                '{ "network": "xhttp", "security": "tls",
+                   "xhttpSettings": { "path": $path, "host": $host, "mode": "stream-one" },
                    "tlsSettings": ($tls + { "alpn": ["h2"] }) }')
             ;;
         mkcp)
@@ -141,22 +168,32 @@ _xhttp_build_inbound() {
             # 证书。security 必须显式写 none——省略会让 Xray 按默认走 TLS 分支。
             local kcp_seed;   kcp_seed=$(echo "$n" | jq -r '.kcp_seed // empty')
             local kcp_header; kcp_header=$(echo "$n" | jq -r '.kcp_header // "none"')
-            stream_json=$(jq -n --arg seed "$kcp_seed" --arg header "$kcp_header" \
-                '{ "network": "kcp", "security": "none",
-                   "kcpSettings": {
-                     "seed": $seed,
-                     "header": { "type": $header },
-                     "mtu": 1350, "tti": 50,
-                     "uplinkCapacity": 5, "downlinkCapacity": 20,
-                     "congestion": false,
-                     "readBufferSize": 2, "writeBufferSize": 2
-                   } }')
+            local kcp_base='{ "mtu": 1350, "tti": 50, "uplinkCapacity": 5, "downlinkCapacity": 20,
+                              "congestion": false, "readBufferSize": 2, "writeBufferSize": 2 }'
+            if _xray_kcp_legacy_ok; then
+                stream_json=$(jq -n --arg seed "$kcp_seed" --arg header "$kcp_header" --argjson base "$kcp_base" \
+                    '{ "network": "kcp", "security": "none",
+                       "kcpSettings": ($base + { "seed": $seed, "header": { "type": $header } }) }')
+            else
+                # finalmask 写法：数组第一个是最内层。旧 mKCP 的顺序是先加密（有 seed
+                # 用 AES-128-GCM，没有则是默认的 xor 混淆 = mkcp-original）再套伪装头；
+                # 没 seed 时必须写 mkcp-original，否则与老客户端的默认混淆对不上。
+                stream_json=$(jq -n --arg seed "$kcp_seed" --arg header "$kcp_header" --argjson base "$kcp_base" \
+                    '{ "network": "kcp", "security": "none", "kcpSettings": $base,
+                       "finalmask": { "udp": (
+                         [ if $seed != "" then { "type": "mkcp-aes128gcm", "settings": { "password": $seed } }
+                           else { "type": "mkcp-original" } end ]
+                         + (if $header == "none" or $header == "" then []
+                            else [{ "type": ("header-" + ($header | sub("-video$"; ""))) }] end)) } }')
+            fi
             ;;
         reality-layer)
             local priv_key; priv_key=$(echo "$n" | jq -r '.private_key // empty')
             local sid;      sid=$(echo "$n"      | jq -r '.short_id // empty')
             local sn;       sn=$(echo "$n"       | jq -r '.server_name // empty')
-            # Reality 之上的传输层可选。默认 xhttp（保持与老节点一致）。
+            # Reality 之上的传输层可选：xhttp（默认）或 grpc。Xray 明确拒绝其它组合
+            # （"REALITY only supports RAW, XHTTP and gRPC"），早先菜单里提供过的 ws / h2
+            # 从来没能通过配置校验，这里一律落到 xhttp，store 里的老值不会让 apply 失败。
             local rtrans;   rtrans=$(echo "$n"   | jq -r '.reality_transport // "xhttp"')
             # 回落限速：仅在 dest 被判定为共享 CDN 前端时写出（见 common.sh 的取值权衡）。
             # 只影响「认证未通过」的回落连接，已认证客户端的代理流量不受任何影响。
@@ -173,12 +210,8 @@ _xhttp_build_inbound() {
 
             local transport_json
             case "$rtrans" in
-                ws)   transport_json=$(jq -n --arg path "$path" \
-                        '{ "network": "websocket", "wsSettings": { "path": $path } }') ;;
                 grpc) transport_json=$(jq -n --arg svc "${path#/}" \
                         '{ "network": "grpc", "grpcSettings": { "serviceName": $svc } }') ;;
-                h2)   transport_json=$(jq -n --arg path "$path" --arg host "$sn" \
-                        '{ "network": "http", "httpSettings": { "path": $path, "host": [$host] } }') ;;
                 *)    transport_json=$(jq -n --arg path "$path" \
                         '{ "network": "xhttp", "xhttpSettings": { "path": $path, "mode": "auto" } }') ;;
             esac
@@ -207,11 +240,14 @@ _xhttp_build_inbound() {
     if [[ "$mode" != "reality-layer" && "$mode" != "mkcp" && "$fallback_enabled" == "true" ]]; then
         fallbacks_json='[{"dest": "127.0.0.1:8080", "xver": 0}]'
     fi
+    # VLESS Encryption 与 fallbacks 互斥（Xray 规定）
+    local decryption; decryption=$(echo "$n" | jq -r '.vless_decryption // "none"')
+    [[ "$decryption" != "none" ]] && fallbacks_json="[]"
 
     jq -n \
         --arg tag "$tag" --argjson port "$port" --arg uuid "$uuid" \
         --arg listen "$listen_addr" --argjson stream "$stream_json" \
-        --argjson fallbacks "$fallbacks_json" \
+        --argjson fallbacks "$fallbacks_json" --arg dec "$decryption" \
         '{
           "tag": $tag,
           "listen": $listen,
@@ -219,12 +255,14 @@ _xhttp_build_inbound() {
           "protocol": "vless",
           "settings": {
             "clients": [{ "id": $uuid, "flow": "" }],
-            "decryption": "none",
+            "decryption": $dec,
             "fallbacks": $fallbacks
           },
           "streamSettings": $stream,
           "sniffing": { "enabled": true, "destOverride": ["http","tls","quic"] }
-        }'
+        }
+        # Xray 连空的 fallbacks 数组也不接受与 decryption 并存（真实内核实测），整键删掉
+        | (if $dec != "none" then del(.settings.fallbacks) else . end)'
 }
 
 _xhttp_apply_all() {
@@ -232,10 +270,13 @@ _xhttp_apply_all() {
     local count; count=$(echo "$nodes" | jq 'length')
 
     local tmp; tmp=$(mktemp)
-    jq 'del(.inbounds[] | select(
+    # 只动 VLESS 入站：VMess 节点同样是 websocket，旧条件只看 network，会把它们一并
+    # 删掉——每次增删改 XHTTP 节点，VMess 就从 config.json 里消失（store 里还在）。
+    jq 'del(.inbounds[] | select((.protocol // "") == "vless" and (
         (.tag | startswith("xhttp")) or
-        ((.streamSettings.network // "") as $n | ["xhttp", "splithttp", "websocket", "ws", "grpc"] | index($n))
-    ))' "$XRAY_CFG" > "$tmp" \
+        ((.streamSettings.network // "") as $n
+         | ["xhttp", "splithttp", "websocket", "ws", "grpc", "httpupgrade", "http", "kcp"] | index($n))
+    )))' "$XRAY_CFG" > "$tmp" \
         && mv "$tmp" "$XRAY_CFG"
 
     for ((i = 0; i < count; i++)); do
@@ -280,15 +321,12 @@ xhttp_add_node() {
     local reality_transport="xhttp"
     if [[ "$mode" == "reality-layer" ]]; then
         echo ""
+        # Xray 的 REALITY 只接受 RAW / XHTTP / gRPC（RAW 就是独立的 Reality 节点）
         echo -e "  $(t xray.xhttp.rt1)"
         echo -e "  $(t xray.xhttp.rt2)"
-        echo -e "  $(t xray.xhttp.rt3)"
-        echo -e "  $(t xray.xhttp.rt4)"
         local rc; read -rp "$(echo -e "${CYAN}$(t xray.xhttp.ask_reality_transport)${NC}")" rc
         case "${rc:-1}" in
-            2) reality_transport="ws" ;;
-            3) reality_transport="grpc" ;;
-            4) reality_transport="h2" ;;
+            2) reality_transport="grpc" ;;
             *) reality_transport="xhttp" ;;
         esac
     fi
@@ -371,9 +409,11 @@ xhttp_add_node() {
         nginx_setup_http_camouflage "$domain" || fallback_enabled=false
     fi
 
+    local enc_pair; enc_pair=$(xray_ask_vlessenc) || return 1
+
     local node
     node=$(jq -n \
-        --arg tag "$tag" --argjson port "$port" --arg uuid "$uuid" \
+        --arg tag "$tag" --argjson port "$port" --arg uuid "$uuid" --arg pair "$enc_pair" \
         --arg domain "$domain" --arg path "$path" --arg mode "$mode" \
         --arg listen_addr "$listen_addr" \
         --argjson public_port "$public_port" \
@@ -383,7 +423,9 @@ xhttp_add_node() {
         '{tag:$tag, port:$port, public_port:$public_port, uuid:$uuid, domain:$domain, path:$path, mode:$mode, listen_addr:$listen_addr, fallback_enabled:$fallback_enabled}
          # 只在用得上的模式里写出这些字段，避免给每个节点塞一堆恒为默认值的键
          | (if $mode == "reality-layer" then .reality_transport = $reality_transport else . end)
-         | (if $mode == "mkcp" then .kcp_seed = $kcp_seed | .kcp_header = $kcp_header else . end)')
+         | (if $mode == "mkcp" then .kcp_seed = $kcp_seed | .kcp_header = $kcp_header else . end)
+         | (if $pair != "" then ($pair | split("\t")) as $p
+              | .vless_decryption = $p[0] | .vless_encryption = $p[1] else . end)')
 
     if [[ "$mode" == "reality-layer" ]]; then
         log_step "$(t xray.xhttp.generating_reality_keys)"
@@ -529,52 +571,42 @@ xhttp_modify_port() {
 }
 
 # ── Share URI ─────────────────────────────────────────────────────────────────
-xhttp_show_share() {
-    local tag="$1"
-    _xhttp_sync_from_live
-    [[ -z "$tag" ]] && { _show_node_list; ask tag "$(t xray.ask.node_tag)"; }
-    local node; node=$(_xhttp_get_by_tag "$tag")
-    [[ -z "$node" ]] && { log_error "$(t xray.node_not_found)"; return 1; }
-
+# 纯函数：_xhttp_share_uri <node_json> <host> <port> → vless:// 链接。
+# 交互菜单与 `psm node export` 共用这一份，避免两处各写一套再各自漂移
+# （node_cli 原先那份只认 reality-layer / grpc / ws，其余模式全导出成错的 xhttp 链接）。
+_xhttp_share_uri() {
+    local node="$1" host="$2" ref_port="$3"
+    local tag;        tag=$(echo "$node"        | jq -r '.tag')
     local uuid;       uuid=$(echo "$node"       | jq -r '.uuid')
-    local domain;     domain=$(echo "$node"     | jq -r '.domain // ""')
     local path;       path=$(echo "$node"       | jq -r '.path')
     local mode;       mode=$(echo "$node"       | jq -r '.mode')
-    local listen;     listen=$(echo "$node"     | jq -r '.listen_addr // "127.0.0.1"')
-    local port;       port=$(echo "$node"       | jq -r '.port')
     local sn;         sn=$(echo "$node"         | jq -r '.server_name // .domain // ""')
-    local public_port; public_port=$(echo "$node" | jq -r '.public_port // (if (.listen_addr // "") == "127.0.0.1" then 443 else .port end)')
 
-    local net host ref_port
+    local net
     case "$mode" in
         xhttp|splithttp) net="xhttp" ;;
         upgrade|ws)      net="ws" ;;
         grpc)            net="grpc" ;;
         httpupgrade)     net="httpupgrade" ;;
-        h2)              net="http" ;;
+        h2)              net="xhttp" ;;   # 服务端是 XHTTP stream-one（见 _xhttp_build_inbound）
         mkcp)            net="kcp" ;;
         # Reality 之上的传输层是可选的，链接里的 type 必须跟着走，
-        # 否则客户端会按 xhttp 去握手而服务端在等 ws / grpc / h2。
+        # 否则客户端会按 xhttp 去握手而服务端在等 grpc。ws / h2 已落到 xhttp。
         reality-layer)
             case "$(echo "$node" | jq -r '.reality_transport // "xhttp"')" in
-                ws)   net="ws" ;;
                 grpc) net="grpc" ;;
-                h2)   net="http" ;;
                 *)    net="xhttp" ;;
             esac
             ;;
     esac
 
-    if [[ "$listen" == "127.0.0.1" && -n "$domain" ]]; then
-        host="$domain"; ref_port="$public_port"
-    else
-        host=$(get_ipv4); ref_port="$public_port"
-    fi
-
     # 用 common.sh 的 url_encode（jq @uri）。原先这里调 python3，而项目其余部分
     # 并不依赖 python3——没装时会静默退回不编码，路径含特殊字符的链接就是坏的。
-    local encoded_path
+    local encoded_path encoded_svc
     encoded_path=$(url_encode "$path") || return 1
+    # gRPC 的 serviceName 在服务端一律去掉前导斜杠（见 _xhttp_build_inbound）；链接里
+    # 必须同样去掉，否则 Reality+gRPC 这类 path 带斜杠的节点，客户端连的是 "/svc"。
+    encoded_svc=$(url_encode "${path#/}") || return 1
 
     local security
     case "$mode" in
@@ -582,12 +614,13 @@ xhttp_show_share() {
         mkcp)          security="none" ;;   # mKCP 自带伪装与 seed 加密，不套 TLS
         *)             security="tls" ;;
     esac
-    local query="encryption=none&security=${security}&type=${net}"
+    local venc; venc=$(url_encode "$(echo "$node" | jq -r '.vless_encryption // "none"')") || return 1
+    local query="encryption=${venc}&security=${security}&type=${net}"
     # mKCP 没有 TLS 就没有 SNI，带上只会让客户端困惑
     [[ "$mode" != "mkcp" ]] && query="${query}&sni=${sn}"
     case "$mode" in
         grpc)
-            query="${query}&serviceName=${encoded_path}"
+            query="${query}&serviceName=${encoded_svc}"
             ;;
         mkcp)
             local kcp_seed; kcp_seed=$(echo "$node" | jq -r '.kcp_seed // ""')
@@ -595,7 +628,10 @@ xhttp_show_share() {
             query="${query}&headerType=${kcp_header}"
             [[ -n "$kcp_seed" ]] && query="${query}&seed=$(url_encode "$kcp_seed")"
             ;;
-        h2|httpupgrade)
+        h2)
+            query="${query}&path=${encoded_path}&host=${sn}&mode=stream-one&alpn=h2"
+            ;;
+        httpupgrade)
             query="${query}&path=${encoded_path}&host=${sn}"
             ;;
         reality-layer)
@@ -603,10 +639,9 @@ xhttp_show_share() {
             local sid; sid=$(echo "$node" | jq -r '.short_id')
             local rt; rt=$(echo "$node" | jq -r '.reality_transport // "xhttp"')
             if [[ "$rt" == "grpc" ]]; then
-                query="${query}&serviceName=${encoded_path}&fp=chrome&pbk=${pub_key}&sid=${sid}"
+                query="${query}&serviceName=${encoded_svc}&fp=chrome&pbk=${pub_key}&sid=${sid}"
             else
-                query="${query}&path=${encoded_path}&fp=chrome&pbk=${pub_key}&sid=${sid}"
-                [[ "$rt" == "xhttp" ]] && query="${query}&mode=auto"
+                query="${query}&path=${encoded_path}&fp=chrome&pbk=${pub_key}&sid=${sid}&mode=auto"
             fi
             ;;
         xhttp|splithttp)
@@ -616,7 +651,22 @@ xhttp_show_share() {
             query="${query}&path=${encoded_path}"
             ;;
     esac
-    local uri="vless://${uuid}@${host}:${ref_port}?${query}#PSM-${tag}"
+    printf 'vless://%s@%s:%s?%s#PSM-%s\n' "$uuid" "$host" "$ref_port" "$query" "$tag"
+}
+
+xhttp_show_share() {
+    local tag="$1"
+    _xhttp_sync_from_live
+    [[ -z "$tag" ]] && { _show_node_list; ask tag "$(t xray.ask.node_tag)"; }
+    local node; node=$(_xhttp_get_by_tag "$tag")
+    [[ -z "$node" ]] && { log_error "$(t xray.node_not_found)"; return 1; }
+
+    local listen;      listen=$(echo "$node"      | jq -r '.listen_addr // "127.0.0.1"')
+    local domain;      domain=$(echo "$node"      | jq -r '.domain // ""')
+    local public_port; public_port=$(echo "$node" | jq -r '.public_port // (if (.listen_addr // "") == "127.0.0.1" then 443 else .port end)')
+    local host
+    if [[ "$listen" == "127.0.0.1" && -n "$domain" ]]; then host="$domain"; else host=$(get_ipv4); fi
+    local uri; uri=$(_xhttp_share_uri "$node" "$host" "$public_port") || return 1
 
     echo -e "\n${BOLD}${GREEN}$(t xray.xhttp.share_title)${NC}"
     echo "  $uri"

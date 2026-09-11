@@ -6,6 +6,38 @@
 #
 # Re-run to update:
 #   same command — detects existing install and does git pull only
+#
+# Alpine (no bash out of the box):
+#   wget -qO- https://psm.jinqians.com | sh
+
+# ── POSIX shim: get onto bash first ───────────────────────────────────────────
+# Everything below this block is bash. This block alone is plain POSIX sh, so
+# `… | sh` works on a bare Alpine: it installs bash through apk and re-runs this
+# installer under bash. When piped, stdin is the script itself, so the re-run
+# takes the keyboard from /dev/tty (the installer asks questions).
+if [ -z "${BASH_VERSION:-}" ]; then
+    if ! command -v bash >/dev/null 2>&1; then
+        if command -v apk >/dev/null 2>&1; then
+            apk add --no-cache bash curl || exit 1
+        else
+            echo "bash is required: install bash, then re-run this command." >&2
+            exit 1
+        fi
+    fi
+    case "$0" in
+        *bootstrap.sh) exec bash "$0" "$@" ;;   # run from a file: no download needed
+    esac
+    PSM_BOOTSTRAP_TMP="$(mktemp)" || exit 1
+    export PSM_BOOTSTRAP_TMP
+    curl -fsSL "${PSM_BOOTSTRAP_URL:-https://psm.jinqians.com}" -o "$PSM_BOOTSTRAP_TMP" \
+        || { rm -f "$PSM_BOOTSTRAP_TMP"; exit 1; }
+    if (: </dev/tty) 2>/dev/null; then
+        exec bash "$PSM_BOOTSTRAP_TMP" "$@" </dev/tty
+    fi
+    exec bash "$PSM_BOOTSTRAP_TMP" "$@"
+fi
+# bash already holds the file open, so the shim's temp copy can go right away.
+[[ -n "${PSM_BOOTSTRAP_TMP:-}" ]] && rm -f "$PSM_BOOTSTRAP_TMP"
 
 set -euo pipefail
 
@@ -64,6 +96,10 @@ _pkg_install() {
         dnf install -y "$@"
     elif command -v yum &>/dev/null; then
         yum install -y "$@"
+    elif command -v apk &>/dev/null; then
+        # --no-cache refreshes the index for this transaction and removes it
+        # afterwards, which is the usual Alpine server convention.
+        apk add --no-cache "$@"
     else
         die "$(bt "无法自动安装软件包，请手动安装： $*" "Cannot install packages automatically. Please install manually: $*")"
     fi

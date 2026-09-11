@@ -291,11 +291,17 @@ cert_install_domain() {
     local dest="$SSL_DIR/$domain"
     mkdir -p "$dest"
 
+    # acme.sh stores this and runs it from cron on every renewal, so it has to
+    # name the init system's own tool. OpenRC's hysteria-server script has no
+    # reload handler, so restart it there — but only when it is running.
+    local reload_cmd="systemctl reload nginx 2>/dev/null; systemctl reload hysteria-server 2>/dev/null || true"
+    _uses_systemd || reload_cmd="rc-service nginx reload 2>/dev/null; rc-service hysteria-server status >/dev/null 2>&1 && rc-service hysteria-server restart >/dev/null 2>&1 || true"
+
     _acme --install-cert -d "$domain" \
         --cert-file      "$dest/cert.pem" \
         --key-file       "$dest/privkey.pem" \
         --fullchain-file "$dest/fullchain.pem" \
-        --reloadcmd      "systemctl reload nginx 2>/dev/null; systemctl reload hysteria-server 2>/dev/null || true"
+        --reloadcmd      "$reload_cmd"
 
     chmod 600 "$dest/privkey.pem"
     log_ok "$(t cert.install.installed "$dest")"

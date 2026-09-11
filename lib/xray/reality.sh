@@ -208,6 +208,8 @@ _reality_build_inbound() {
     local flow;        flow=$(echo "$node_json"        | jq -r '.flow')
     local short_ids;   short_ids=$(echo "$node_json"   | jq -c '.short_ids')
     local listen_addr; listen_addr=$(echo "$node_json" | jq -r '.listen_addr // "0.0.0.0"')
+    # VLESS Encryption：服务端 decryption 串（未启用时为 none）
+    local decryption;  decryption=$(echo "$node_json"  | jq -r '.vless_decryption // "none"')
 
     local server_names_raw; server_names_raw=$(echo "$node_json" | jq -r '.server_names_raw // .server_name')
     local server_names_json
@@ -249,7 +251,7 @@ _reality_build_inbound() {
     "clients": [
       { "id": "$uuid", "flow": "$flow" }
     ],
-    "decryption": "none"
+    "decryption": "$decryption"
   },
   "streamSettings": {
     "network": "tcp",
@@ -281,7 +283,7 @@ _reality_apply_all() {
     local tmp; tmp=$(mktemp)
     jq 'del(.inbounds[] | select(
         (.tag | startswith("reality")) or
-        ((.streamSettings.security // "") == "reality" and (.streamSettings.network // "") == "tcp")
+        ((.protocol // "") == "vless" and (.streamSettings.security // "") == "reality" and (.streamSettings.network // "") == "tcp")
     ))' "$XRAY_CFG" > "$tmp" \
         && mv "$tmp" "$XRAY_CFG"
 
@@ -563,8 +565,19 @@ reality_add_node() {
     log_info "$(t xray.reality.short_id "$short_id")"
     log_info "UUID        : $uuid"
 
+    # VLESS Encryption 是整个入站的属性：复用同一入站的节点必须沿用它的 decryption，
+    # 否则同一个入站上会出现两套互相冲突的服务端密钥。
+    local enc_pair=""
+    if (( reuse_sni )); then
+        enc_pair=$(echo "$reuse_node" | jq -r 'if (.vless_decryption // "") != ""
+            then "\(.vless_decryption)\t\(.vless_encryption)" else "" end')
+    else
+        enc_pair=$(xray_ask_vlessenc) || return 1
+    fi
+
     local node_json
     node_json=$(jq -n \
+        --arg  pair             "$enc_pair" \
         --arg  tag              "$tag" \
         --argjson port          "$port" \
         --arg  uuid             "$uuid" \
@@ -592,7 +605,9 @@ reality_add_node() {
           short_ids:        $short_ids,
           listen_addr:      $listen_addr,
           limit_fallback:   $limit_fb
-        }')
+        }
+        | (if $pair != "" then ($pair | split("\t")) as $p
+             | .vless_decryption = $p[0] | .vless_encryption = $p[1] else . end)')
 
     _reality_upsert "$node_json"
     _reality_apply_all
@@ -839,6 +854,7 @@ reality_show_uri() {
     local public_port; public_port=$(echo "$node" | jq -r '.public_port // (if (.listen_addr // "") == "127.0.0.1" then 443 else .port end)')
     local ipv4;        ipv4=$(get_ipv4)
     local ipv6;        ipv6=$(get_ipv6 2>/dev/null || echo "")
+    local venc;        venc=$(url_encode "$(echo "$node" | jq -r '.vless_encryption // "none"')") || return 1
 
     echo -e "\n${BOLD}${BLUE}══ Reality Node: $tag ══════════════════${NC}"
     printf "  %-14s %s\n" "UUID:"        "$uuid"
@@ -854,7 +870,7 @@ reality_show_uri() {
     command -v qrencode &>/dev/null || ensure_pkg_deps qrencode 2>/dev/null || true
 
     if [[ -n "$ipv4" ]]; then
-        local uri_v4="vless://${uuid}@${ipv4}:${public_port}?encryption=none&flow=${flow}&security=reality&sni=${server_name}&fp=chrome&pbk=${pub_key}&sid=${short_id}&type=tcp#PSM-${tag}-v4"
+        local uri_v4="vless://${uuid}@${ipv4}:${public_port}?encryption=${venc}&flow=${flow}&security=reality&sni=${server_name}&fp=chrome&pbk=${pub_key}&sid=${short_id}&type=tcp#PSM-${tag}-v4"
         echo -e "${BOLD}${GREEN}$(t xray.reality.ipv4_link)${NC}"
         echo "  $uri_v4"
         echo ""
@@ -862,7 +878,7 @@ reality_show_uri() {
     fi
 
     if [[ -n "$ipv6" ]]; then
-        local uri_v6="vless://${uuid}@[${ipv6}]:${public_port}?encryption=none&flow=${flow}&security=reality&sni=${server_name}&fp=chrome&pbk=${pub_key}&sid=${short_id}&type=tcp#PSM-${tag}-v6"
+        local uri_v6="vless://${uuid}@[${ipv6}]:${public_port}?encryption=${venc}&flow=${flow}&security=reality&sni=${server_name}&fp=chrome&pbk=${pub_key}&sid=${short_id}&type=tcp#PSM-${tag}-v6"
         echo -e "${BOLD}${GREEN}$(t xray.reality.ipv6_link)${NC}"
         echo "  $uri_v6"
         echo ""

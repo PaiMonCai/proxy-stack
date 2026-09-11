@@ -94,10 +94,13 @@ _vision_build_inbound() {
     local fallback_enabled; fallback_enabled=$(echo "$n" | jq -r '.fallback_enabled // true')
     local fallbacks_json="[]"
     [[ "$fallback_enabled" == "true" ]] && fallbacks_json='[{"dest":"127.0.0.1:8080","xver":0}]'
+    # VLESS Encryption 与 fallbacks 互斥（Xray 规定）：启用加密的节点不再回落伪装站
+    local decryption; decryption=$(echo "$n" | jq -r '.vless_decryption // "none"')
+    [[ "$decryption" != "none" ]] && fallbacks_json="[]"
 
     jq -n \
         --arg tag "$tag" --arg listen "$listen_addr" --argjson port "$port" \
-        --arg uuid "$uuid" --arg flow "$flow" \
+        --arg uuid "$uuid" --arg flow "$flow" --arg dec "$decryption" \
         --arg cert "$cert_dir/fullchain.pem" --arg key "$cert_dir/privkey.pem" \
         --argjson fallbacks "$fallbacks_json" \
         '{
@@ -107,7 +110,7 @@ _vision_build_inbound() {
           "protocol": "vless",
           "settings": {
             "clients": [{ "id": $uuid, "flow": $flow }],
-            "decryption": "none",
+            "decryption": $dec,
             "fallbacks": $fallbacks
           },
           "streamSettings": {
@@ -123,7 +126,9 @@ _vision_build_inbound() {
             }
           },
           "sniffing": { "enabled": true, "destOverride": ["http","tls","quic"] }
-        }'
+        }
+        # Xray 连空的 fallbacks 数组也不接受与 decryption 并存（真实内核实测），整键删掉
+        | (if $dec != "none" then del(.settings.fallbacks) else . end)'
 }
 
 _vision_apply_all() {
@@ -131,9 +136,10 @@ _vision_apply_all() {
     local count; count=$(echo "$nodes" | jq 'length')
 
     local tmp; tmp=$(mktemp)
+    # 只认 VLESS：Trojan 同样是 TLS over TCP，不看 protocol 会把 Trojan 入站一并删掉
     jq 'del(.inbounds[] | select(
         (.tag | startswith("vision")) or
-        ((.streamSettings.security // "") == "tls" and (.streamSettings.network // "") == "tcp")
+        ((.protocol // "") == "vless" and (.streamSettings.security // "") == "tls" and (.streamSettings.network // "") == "tcp")
     ))' "$XRAY_CFG" > "$tmp" \
         && mv "$tmp" "$XRAY_CFG"
 
@@ -171,6 +177,7 @@ vision_add_node() {
     ask uuid "$(t xray.ask.uuid_auto)" ""
     [[ -z "$uuid" ]] && uuid=$(uuid_gen)
     ask flow "$(t xray.ask.flow)" "xtls-rprx-vision"
+    local enc_pair; enc_pair=$(xray_ask_vlessenc) || return 1
 
     # ── Nginx reverse proxy choice ────────────────────────────────────────────
     local listen_addr="" use_nginx=0 public_port fallback_enabled=true
@@ -205,8 +212,10 @@ vision_add_node() {
         --arg uuid "$uuid" --arg domain "$domain" \
         --arg flow "$flow" --arg listen_addr "$listen_addr" \
         --argjson public_port "$public_port" \
-        --argjson fallback_enabled "$fallback_enabled" \
-        '{tag:$tag, port:$port, public_port:$public_port, uuid:$uuid, domain:$domain, flow:$flow, listen_addr:$listen_addr, fallback_enabled:$fallback_enabled}')
+        --argjson fallback_enabled "$fallback_enabled" --arg pair "$enc_pair" \
+        '{tag:$tag, port:$port, public_port:$public_port, uuid:$uuid, domain:$domain, flow:$flow, listen_addr:$listen_addr, fallback_enabled:$fallback_enabled}
+         | (if $pair != "" then ($pair | split("\t")) as $p
+              | .vless_decryption = $p[0] | .vless_encryption = $p[1] else . end)')
     _vision_upsert "$node"
     _vision_apply_all
 
@@ -334,7 +343,8 @@ vision_show_share() {
         host=$(get_ipv4); ref_port="$public_port"
     fi
 
-    local uri="vless://${uuid}@${host}:${ref_port}?encryption=none&flow=${flow}&security=tls&sni=${domain}&type=tcp#PSM-${tag}"
+    local venc; venc=$(url_encode "$(echo "$node" | jq -r '.vless_encryption // "none"')") || return 1
+    local uri="vless://${uuid}@${host}:${ref_port}?encryption=${venc}&flow=${flow}&security=tls&sni=${domain}&type=tcp#PSM-${tag}"
     echo -e "\n${BOLD}${GREEN}$(t xray.vision.share_title)${NC}"
     echo "  $uri"
     echo ""

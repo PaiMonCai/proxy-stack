@@ -305,9 +305,18 @@ rs_update_cli() {
 }
 
 # ── 每日自动更新 ─────────────────────────────────────────────────────────────
-rs_timer_active() { systemctl is-active --quiet psm-ruleset-update.timer 2>/dev/null; }
+rs_timer_active() {
+    _uses_systemd || { psm_cron_active psm-ruleset-update; return; }
+    systemctl is-active --quiet psm-ruleset-update.timer 2>/dev/null
+}
 
 rs_timer_enable() {
+    if ! _uses_systemd; then
+        # 等价于下面的 RandomizedDelaySec=1h：在 00:00–00:59 里随机挑一分钟
+        psm_cron_set psm-ruleset-update "$(( RANDOM % 60 )) 0 * * *" "--ruleset-update"
+        log_ok "$(t rs.timer.enabled)"
+        return 0
+    fi
     cat > "$RS_TIMER_SVC" <<EOF
 [Unit]
 Description=PSM rule-set update
@@ -343,6 +352,7 @@ EOF
 rs_timer_disable() {
     systemctl disable --now psm-ruleset-update.timer &>/dev/null || true
     rm -f "$RS_TIMER_SVC" "$RS_TIMER"
-    systemctl daemon-reload 2>/dev/null || true
+    psm_cron_remove psm-ruleset-update
+    svc_daemon_reload
     log_ok "$(t rs.timer.disabled)"
 }

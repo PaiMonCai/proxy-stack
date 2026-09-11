@@ -161,6 +161,11 @@ EOF
 }
 
 _vg_write_unit() {
+    if ! _uses_systemd; then
+        psm_write_openrc_service "$VG_SVC_NAME" "PSM VPNGate residential-IP exit tunnel" \
+            "$(_vg_ovpn_bin)" "--config $VG_OVPN_CONF --cd $VG_OVPN_DIR"
+        return
+    fi
     cat > "$VG_SVC" <<EOF
 [Unit]
 Description=PSM VPNGate residential-IP exit tunnel
@@ -182,7 +187,7 @@ EOF
 }
 
 # ── 隧道状态 ─────────────────────────────────────────────────────────────────
-vg_tun_installed() { [[ -f "$VG_SVC" && -f "$VG_OVPN_CONF" ]]; }
+vg_tun_installed() { [[ ( -f "$VG_SVC" || -f "/etc/init.d/$VG_SVC_NAME" ) && -f "$VG_OVPN_CONF" ]]; }
 vg_tun_active()    { svc_is_active "$VG_SVC_NAME"; }
 vg_tun_dev_up()    { ip link show "$VG_DEV" &>/dev/null; }
 
@@ -215,7 +220,7 @@ vg_tun_exit_info() {
 }
 
 # ── 连接 ─────────────────────────────────────────────────────────────────────
-_vg_journal_tail() { journalctl -u "$VG_SVC_NAME" -n "${1:-15}" --no-pager 2>/dev/null || true; }
+_vg_journal_tail() { svc_log_tail "$VG_SVC_NAME" "${1:-15}"; }
 
 # OpenSSL 3 上的 legacy 算法报错特征，命中则值得带 legacy provider 重试一次。
 _vg_needs_legacy() {
@@ -247,14 +252,14 @@ vg_tun_connect() {
     local attempt
     for attempt in 1 2; do
         (( quiet )) || log_step "$(t vg.tun.connecting "$ip")"
-        systemctl restart "$VG_SVC_NAME" 2>/dev/null || true
+        svc_restart "$VG_SVC_NAME" &>/dev/null || true
 
         if _vg_wait_ready; then
             local info
             if info=$(vg_tun_exit_info); then
                 # 只有真正连通的节点才值得开机自启——试连失败的配置留在磁盘上
                 # 但不自启，免得重启后对着一个死节点空转。
-                systemctl enable "$VG_SVC_NAME" &>/dev/null || true
+                svc_enable "$VG_SVC_NAME" &>/dev/null || true
                 _vg_record_active "$ip" "$info"
                 (( quiet )) || log_ok "$(t vg.tun.connected "$ip" "$(jq -r '.query' <<<"$info")")"
                 return 0
@@ -273,7 +278,7 @@ vg_tun_connect() {
         break
     done
 
-    systemctl stop "$VG_SVC_NAME" 2>/dev/null || true
+    svc_stop "$VG_SVC_NAME" &>/dev/null || true
     if (( ! quiet )); then
         echo -e "${YELLOW}$(t vg.tun.log_tail)${NC}"
         _vg_journal_tail 12 | sed 's/^/    /'
@@ -385,15 +390,17 @@ vg_connect_best() {
 
 vg_tun_down() {
     vg_tun_installed || { log_warn "$(t vg.tun.not_installed)"; return 1; }
-    systemctl stop "$VG_SVC_NAME" 2>/dev/null || true
+    svc_stop "$VG_SVC_NAME" &>/dev/null || true
     log_ok "$(t vg.tun.stopped)"
 }
 
 # 彻底清理：停服务、删配置、撤掉路由表与规则。
 vg_tun_remove() {
-    systemctl disable --now "$VG_SVC_NAME" &>/dev/null || true
+    svc_stop "$VG_SVC_NAME" &>/dev/null || true
+    svc_disable "$VG_SVC_NAME" &>/dev/null || true
+    psm_remove_openrc_service "$VG_SVC_NAME"
     rm -f "$VG_SVC" "$VG_OVPN_CONF" "$VG_OVPN_AUTH" "$VG_UP_SCRIPT" "$VG_DOWN_SCRIPT"
-    systemctl daemon-reload 2>/dev/null || true
+    svc_daemon_reload
 
     # 规则可能被 up 脚本重复写过，循环删到没有为止（每次 del 只删一条）。
     local guard=0 rules
@@ -426,6 +433,12 @@ _vg_wd_log() {
 vg_watchdog_enabled() { [[ "$(vg_state_get '.watchdog.enabled')" == "true" ]]; }
 
 vg_watchdog_enable() {
+    if ! _uses_systemd; then
+        psm_cron_set psm-vpngate-watchdog "*/2 * * * *" "--vpngate-watchdog"
+        vg_state_put watchdog "$(jq -nc '{enabled: true, fail: 0}')"
+        log_ok "$(t vg.wd.enabled)"
+        return 0
+    fi
     cat > "$VG_WD_SVC" <<EOF
 [Unit]
 Description=PSM VPNGate tunnel watchdog
@@ -459,7 +472,8 @@ EOF
 vg_watchdog_disable() {
     systemctl disable --now psm-vpngate-watchdog.timer &>/dev/null || true
     rm -f "$VG_WD_SVC" "$VG_WD_TIMER"
-    systemctl daemon-reload 2>/dev/null || true
+    psm_cron_remove psm-vpngate-watchdog
+    svc_daemon_reload
     vg_state_put watchdog "$(jq -nc '{enabled: false, fail: 0}')"
     log_ok "$(t vg.wd.disabled)"
 }
@@ -475,7 +489,7 @@ vg_watchdog_run() {
 
     if ! vg_tun_active; then
         _vg_wd_log "service inactive → restart"
-        systemctl restart "$VG_SVC_NAME" 2>/dev/null || true
+        svc_restart "$VG_SVC_NAME" &>/dev/null || true
         sleep 10
     fi
 

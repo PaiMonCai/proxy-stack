@@ -128,7 +128,7 @@ _auto_update() {
 _auto_update
 
 _banner() {
-    clear
+    clear 2>/dev/null || true   # no TERM → clear fails, and set -e would kill the menu
     local ipv4; ipv4=$(get_ipv4 2>/dev/null || echo "N/A")
 
     # 逐个探测组件版本；未安装的留空 → 状态栏只显示已安装的组件
@@ -255,6 +255,7 @@ _view_all_nodes() {
     source "$LIB_DIR/xray/xhttp.sh"     2>/dev/null; _show_node_list 2>/dev/null || true
     source "$LIB_DIR/xray/ss2022.sh"    2>/dev/null; _xss_show_node_list 2>/dev/null || true
     source "$LIB_DIR/xray/trojan.sh"    2>/dev/null; _trojan_show_node_list 2>/dev/null || true
+    source "$LIB_DIR/xray/hysteria2.sh" 2>/dev/null; _xhy2_show_node_list 2>/dev/null || true
     source "$LIB_DIR/xray/vmess.sh"          2>/dev/null; _vmess_show_node_list  2>/dev/null || true
     source "$LIB_DIR/xray/socks.sh"          2>/dev/null; _socks_show_node_list  2>/dev/null || true
 

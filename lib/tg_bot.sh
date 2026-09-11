@@ -719,6 +719,13 @@ tgbot_daemon() {
 
 # ── Systemd service management ─────────────────────────────────────────────────
 _tgbot_install_svc() {
+    if ! _uses_systemd; then
+        psm_write_openrc_service psm-tgbot "PSM Telegram Traffic Bot" "${PSM_ROOT}/manager.sh" "--tgbot" || return 1
+        svc_enable psm-tgbot || true
+        svc_restart psm-tgbot
+        log_ok "$(t tgbot.service.started)"
+        return 0
+    fi
     cat > "$TG_BOT_SVC" <<EOF
 [Unit]
 Description=PSM Telegram Traffic Bot
@@ -743,12 +750,13 @@ EOF
 _tgbot_uninstall_svc() {
     systemctl disable --now psm-tgbot.service 2>/dev/null || true
     rm -f "$TG_BOT_SVC"
-    systemctl daemon-reload
+    psm_remove_openrc_service psm-tgbot
+    svc_daemon_reload
     log_ok "$(t tgbot.service.deleted)"
 }
 
 _tgbot_svc_active() {
-    systemctl is-active --quiet psm-tgbot.service 2>/dev/null
+    svc_is_active psm-tgbot 2>/dev/null
 }
 
 # ── Setup wizard ───────────────────────────────────────────────────────────────
@@ -804,7 +812,7 @@ tgbot_setup() {
 
     if _tgbot_svc_active; then
         ask_yn "$(t tgbot.setup.ask_restart)" Y && \
-            systemctl restart psm-tgbot.service && log_ok "$(t tgbot.service.restarted)"
+            svc_restart psm-tgbot && log_ok "$(t tgbot.service.restarted)"
     else
         ask_yn "$(t tgbot.setup.ask_start)" Y && _tgbot_install_svc
     fi
@@ -911,9 +919,9 @@ tgbot_menu() {
             1) tgbot_setup ;;
             2) _tgbot_load_cfg && tgbot_tenant_menu; press_enter ;;
             3) _tgbot_load_cfg && _tgbot_install_svc; press_enter ;;
-            4) systemctl stop psm-tgbot.service 2>/dev/null && log_ok "$(t tgbot.service.stopped)"; press_enter ;;
-            5) systemctl restart psm-tgbot.service 2>/dev/null && log_ok "$(t tgbot.service.restarted)"; press_enter ;;
-            6) journalctl -u psm-tgbot.service -f --no-pager ;;
+            4) svc_stop psm-tgbot &>/dev/null && log_ok "$(t tgbot.service.stopped)"; press_enter ;;
+            5) svc_restart psm-tgbot &>/dev/null && log_ok "$(t tgbot.service.restarted)"; press_enter ;;
+            6) svc_logs psm-tgbot ;;
             7) ask_yn "$(t tgbot.menu.ask_uninstall)" N && _tgbot_uninstall_svc; press_enter ;;
             8) source "$LIB_DIR/tgbot/health_report.sh"; hr_menu ;;
             0) return ;;

@@ -112,11 +112,14 @@ _ssh_schedule_rollback() {
     _ssh_init
     local svc; svc=$(_ssh_svc_name)
     local rollback_msg; rollback_msg="$(t security.ssh.rollback_executed "$reason")"
+    # The detached shell can't call PSM's svc_* helpers, so spell out the command.
+    local reload_cmd="systemctl reload ${svc} 2>/dev/null || systemctl restart ${svc} 2>/dev/null"
+    _uses_systemd || reload_cmd="rc-service ${svc} reload 2>/dev/null || rc-service ${svc} restart 2>/dev/null"
     nohup bash -c "
         sleep ${SSH_ROLLBACK_DELAY}
         if [[ -f '${SSH_ROLLBACK_STATE}' ]]; then
             cp -a '${backup}' '${SSHD_CFG}'
-            if sshd -t 2>/dev/null; then systemctl reload ${svc} 2>/dev/null || systemctl restart ${svc} 2>/dev/null; fi
+            if sshd -t 2>/dev/null; then ${reload_cmd}; fi
             rm -f '${SSH_ROLLBACK_STATE}'
             echo \"\$(date '+%Y-%m-%d %H:%M:%S') ${rollback_msg}\" >> '${SSH_ROLLBACK_LOG}'
         fi

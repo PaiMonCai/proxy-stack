@@ -174,7 +174,7 @@ _stop_services() {
 
 _start_services() {
     for svc in nginx xray hysteria-server; do
-        systemctl is-enabled --quiet "$svc" 2>/dev/null && svc_start "$svc"
+        svc_is_enabled "$svc" && svc_start "$svc"
     done
 }
 

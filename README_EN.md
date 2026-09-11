@@ -129,14 +129,17 @@ bash /opt/psm/install.sh
 | Oracle Linux            | 8 or later                |
 | Amazon Linux            | 2 or later                |
 | Fedora                  | recent supported releases |
+| Alpine Linux            | 3.18 or later (see note below) |
 
 > Systems not in this list, or older versions (CentOS 7, Debian 9, Ubuntu 18.04 and earlier), are untested and not guaranteed to work.
+
+> Alpine uses `apk` and OpenRC. A fresh Alpine has no bash: run `wget -qO- https://psm.jinqians.com | sh` (it installs bash through apk, then continues), or `apk add --no-cache bash curl` first and use the command above. The installer adds the GNU base tools PSM relies on (coreutils, grep, procps, iproute2, tzdata, …) and replaces busybox crond, which ignores `/etc/cron.d`, with cronie. Xray, sing-box (the musl build is fetched automatically), mihomo, Hysteria2, realm, ss-rust, the Telegram bot and the VPNGate tunnel run as OpenRC services that start at boot, logging to `/var/log/psm/<service>.log`; traffic accounting, rule-set updates, the Reality watchdog and the health report run from cron. The one exception is standalone Snell: the official snell-server does not run on musl (tested; gcompat does not help either), so on Alpine use a Snell node on sing-box (v5/v6) or mihomo (v4/v5).
 
 | Item          | Requirement                                                            |
 | ------------- | ---------------------------------------------------------------------- |
 | Privileges    | root                                                                    |
 | Architecture  | x86_64 · arm64                                                         |
-| Base packages | `curl` or `wget` (either one) · `git` (installed by bootstrap) |
+| Base packages | `bash` · `curl` or `wget` (either one) · `git` (installed by bootstrap) |
 
 Other dependencies (`jq`, `openssl`, `qrencode`, `unzip`, `iptables`, `fail2ban`, …) are installed on demand the first time each feature module is used.
 

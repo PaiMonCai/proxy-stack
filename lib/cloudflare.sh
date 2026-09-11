@@ -197,11 +197,14 @@ cf_auto_cert() {
     export CF_Token="$token"
     export PATH="$ACME_HOME:$PATH"
 
+    local reload_cmd="systemctl reload nginx"
+    _uses_systemd || reload_cmd="rc-service nginx reload"
+
     "$ACME_HOME/acme.sh" --issue --dns dns_cf -d "$domain" \
         && "$ACME_HOME/acme.sh" --install-cert -d "${domain#\*.}" \
             --fullchain-file "$NGINX_SSL_DIR/${domain#\*.}/fullchain.pem" \
             --key-file       "$NGINX_SSL_DIR/${domain#\*.}/privkey.pem" \
-            --reloadcmd      "systemctl reload nginx" \
+            --reloadcmd      "$reload_cmd" \
         && log_ok "$(t cf.cert.issued_installed "$domain")" \
         || log_error "$(t cf.cert.failed)"
 }

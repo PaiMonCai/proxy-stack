@@ -20,6 +20,7 @@ _ssrust_check_deps() {
 
 # ── Install ───────────────────────────────────────────────────────────────────
 ssrust_install() {
+    _uses_systemd || { _ssrust_native_install install; return; }
     log_step "$(t ssrust.downloading_install)"
     local tmp; tmp=$(mktemp --suffix=.sh)
     if ! curl -fsSL "$SS_INSTALLER" -o "$tmp"; then
@@ -33,6 +34,83 @@ ssrust_install() {
     rm -f "$tmp"
     (( rc != 0 )) && log_warn "$(t ssrust.install_rc "$rc")" \
                   || log_ok "$(t ssrust.install_done)"
+    return 0
+}
+
+# ── Native install (no systemd, e.g. Alpine/OpenRC) ──────────────────────────
+# The upstream ss-2022.sh only writes systemd units. Here: the static musl build
+# from the shadowsocks-rust releases, the same config.json layout the upstream
+# script writes (so show/uninstall/traffic handle both the same way), and an
+# OpenRC service. `update` swaps the binary and keeps the config.
+SS_NATIVE_FALLBACK="v1.25.0"   # used only when the GitHub API is unreachable
+
+_ssrust_free_port() {
+    local p _
+    for _ in {1..30}; do
+        p=$(( RANDOM % 40000 + 20000 ))
+        ss -Hltun "sport = :$p" 2>/dev/null | grep -q . || { echo "$p"; return 0; }
+    done
+    echo "$p"
+}
+
+_ssrust_native_install() {
+    local mode="${1:-install}"
+    ensure_pkg_deps curl jq tar xz openssl
+    require_cmd curl jq tar xz openssl
+
+    local triple
+    case "$(get_arch)" in
+        amd64) triple="x86_64-unknown-linux-musl" ;;
+        arm64) triple="aarch64-unknown-linux-musl" ;;
+        arm32) triple="armv7-unknown-linux-musleabihf" ;;
+    esac
+    local tag
+    tag=$(curl -fsSL --max-time 15 "https://api.github.com/repos/shadowsocks/shadowsocks-rust/releases/latest" 2>/dev/null \
+          | jq -r '.tag_name // empty' 2>/dev/null) || true
+    [[ "$tag" =~ ^v[0-9] ]] || tag="$SS_NATIVE_FALLBACK"
+    log_step "$(t common.native.installing ss-rust "$tag")"
+
+    local file="shadowsocks-${tag}.${triple}.tar.xz"
+    local url="https://github.com/shadowsocks/shadowsocks-rust/releases/download/${tag}/${file}"
+    local tmp; tmp=$(mktemp -d)
+    if ! curl -fsSL -o "$tmp/$file" "$url" \
+        || ! xz -dc "$tmp/$file" | tar -x -C "$tmp" ssserver \
+        || [[ ! -f "$tmp/ssserver" ]]; then
+        rm -rf "$tmp"
+        log_error "$(t common.native.download_fail "$url")"
+        return 1
+    fi
+    install -m 755 "$tmp/ssserver" "$SS_BIN"
+    rm -rf "$tmp"
+    mkdir -p "$(dirname "$SS_CONF")"
+    echo "${tag#v}" > "$(dirname "$SS_CONF")/ver.txt"
+
+    if [[ "$mode" == "install" || ! -f "$SS_CONF" ]]; then
+        local listen="0.0.0.0"
+        [[ -s /proc/net/if_inet6 ]] && listen="::"
+        jq -n --arg server "$listen" --argjson port "$(_ssrust_free_port)" \
+              --arg password "$(openssl rand -base64 16)" \
+            '{server: $server, server_port: $port, password: $password,
+              method: "2022-blake3-aes-128-gcm", fast_open: false,
+              mode: "tcp_and_udp", user: "nobody", timeout: 300}' > "$SS_CONF"
+        chmod 600 "$SS_CONF"
+    fi
+
+    psm_write_openrc_service "$SS_SERVICE" "Shadowsocks Rust" "$SS_BIN" "-c $SS_CONF" || return 1
+    svc_enable "$SS_SERVICE" || true
+    svc_restart "$SS_SERVICE" >/dev/null 2>&1 || true
+    sleep 2
+    if ! svc_is_active "$SS_SERVICE"; then
+        log_error "$(t common.native.start_fail ss-rust)"
+        svc_log_tail "$SS_SERVICE" 15 >&2
+        return 1
+    fi
+    # SS2022 refuses clients whose clock is more than 30 s off: keep ours synced.
+    { pkg_install chrony && _svc_enable_now chronyd; } >/dev/null 2>&1 || true
+    declare -f firewall_open_port &>/dev/null \
+        && firewall_open_port "$(jq -r '.server_port' "$SS_CONF")" both || true
+    log_ok "$(t ssrust.install_done)"
+    [[ "$mode" == "install" ]] && ssrust_show_config
     return 0
 }
 
@@ -71,10 +149,11 @@ ssrust_uninstall() {
     ask_yn "$(t ssrust.ask_uninstall)" N || return 0
     systemctl stop "$SS_SERVICE" 2>/dev/null || true
     systemctl disable "$SS_SERVICE" 2>/dev/null || true
+    psm_remove_openrc_service "$SS_SERVICE"
     rm -f "$SS_BIN"
     rm -f /etc/systemd/system/ss-rust.service
     rm -rf /etc/ss-rust
-    systemctl daemon-reload
+    svc_daemon_reload
     if [[ -f "${CFG_DIR}/traffic/state.json" ]]; then
         source "$LIB_DIR/traffic.sh"; _trf_init; _trf_cleanup_node "ss2022"
     fi
@@ -83,6 +162,7 @@ ssrust_uninstall() {
 
 # ── Update ────────────────────────────────────────────────────────────────────
 ssrust_update() {
+    _uses_systemd || { _ssrust_native_install update; return; }
     log_step "$(t ssrust.downloading_update)"
     local tmp; tmp=$(mktemp --suffix=.sh)
     if ! curl -fsSL "$SS_INSTALLER" -o "$tmp"; then
@@ -96,7 +176,7 @@ ssrust_update() {
 
 # ── Logs ──────────────────────────────────────────────────────────────────────
 ssrust_logs() {
-    journalctl -u "$SS_SERVICE" -f --no-pager
+    svc_logs "$SS_SERVICE"
 }
 
 # ── List helper (called by _view_all_nodes in manager.sh) ────────────────────

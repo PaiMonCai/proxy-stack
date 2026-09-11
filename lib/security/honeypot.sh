@@ -173,15 +173,7 @@ _hp_remove_port() {
     true
 }
 
-_hp_persist_iptables() {
-    # RHEL family keeps rules in /etc/sysconfig (dir always exists there);
-    # Debian family uses /etc/iptables, which only exists once
-    # iptables-persistent is installed — create it so the save can land.
-    [[ -d /etc/sysconfig ]] || mkdir -p /etc/iptables 2>/dev/null || true
-    iptables-save  > /etc/sysconfig/iptables    2>/dev/null \
-        || iptables-save  > /etc/iptables/rules.v4 2>/dev/null || true
-    ip6tables-save > /etc/iptables/rules.v6     2>/dev/null || true
-}
+_hp_persist_iptables() { psm_iptables_persist; }
 
 hp_apply_rules() {
     _hp_load_cfg

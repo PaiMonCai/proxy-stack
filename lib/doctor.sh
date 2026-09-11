@@ -73,7 +73,7 @@ _doctor_check_system() {
     [[ -n "$pretty" ]] || pretty="${os_id:-unknown} ${os_version:-}"
 
     case "$os_id" in
-        ubuntu|debian|raspbian|centos|rhel|fedora|rocky|almalinux|ol|amzn) supported=true ;;
+        alpine|ubuntu|debian|raspbian|centos|rhel|fedora|rocky|almalinux|ol|amzn) supported=true ;;
     esac
     if [[ "$supported" == true ]]; then
         _doctor_add "system.os" "system" "ok" \
@@ -95,8 +95,15 @@ _doctor_check_system() {
 }
 
 _doctor_check_commands() {
-    local cmd
-    for cmd in bash curl jq openssl systemctl; do
+    local cmd commands=(bash curl jq openssl)
+    # Alpine's normal init is OpenRC. Treat rc-service as the required service
+    # controller there instead of reporting a false-critical missing systemctl.
+    if [[ "$(_doctor_os_value ID)" == "alpine" ]] && command -v rc-service &>/dev/null; then
+        commands+=(rc-service)
+    else
+        commands+=(systemctl)
+    fi
+    for cmd in "${commands[@]}"; do
         if command -v "$cmd" &>/dev/null; then
             _doctor_add "command.${cmd}" "dependency" "ok" \
                 "$(t doctor.msg.command_ok "$cmd")" \
@@ -202,6 +209,10 @@ _doctor_check_configs() {
 
 _doctor_service_load_state() {
     local service="$1"
+    if _uses_openrc; then
+        svc_exists "$service" && printf 'loaded' || printf 'not-found'
+        return
+    fi
     command -v systemctl &>/dev/null || { printf 'unavailable'; return; }
     systemctl show "$service" --property=LoadState --value 2>/dev/null || printf 'not-found'
 }
@@ -230,12 +241,16 @@ _doctor_check_core() {
             "$(_doctor_details name "$label" binary "$binary" service "$service" config "$config" installed "true")"
         return 0
     fi
-    if ! command -v systemctl &>/dev/null; then
+    if ! command -v systemctl &>/dev/null && ! _uses_openrc; then
         _doctor_add "core.${id}" "core" "warning" "$(t doctor.msg.service_unavailable "$label")" \
             "$(_doctor_details name "$label" binary "$binary" service "$service" config "$config" state "unknown")"
         return 0
     fi
-    active_state=$(systemctl is-active "$service" 2>/dev/null || true)
+    if _uses_openrc; then
+        svc_is_active "$service" && active_state="active" || active_state="inactive"
+    else
+        active_state=$(systemctl is-active "$service" 2>/dev/null || true)
+    fi
     [[ -n "$active_state" ]] || active_state="inactive"
     if [[ "$load_state" == "not-found" ]]; then
         _doctor_add "core.${id}" "core" "critical" "$(t doctor.msg.service_missing "$label" "$service")" \

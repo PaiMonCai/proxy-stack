@@ -18,6 +18,11 @@ nginx_install() {
     detect_os
     log_step "$(t nginx.installing)"
     case "$OS_ID" in
+        alpine)
+            # Alpine packages stream separately; its module loader picks it up
+            # from /etc/nginx/modules on current releases.
+            pkg_install nginx nginx-mod-stream
+            ;;
         ubuntu|debian|raspbian)
             pkg_update
             # libnginx-mod-stream provides the stream {} / ssl_preread support
@@ -216,6 +221,7 @@ nginx_upgrade() {
     detect_os
     log_step "$(t nginx.upgrading)"
     case "$OS_ID" in
+        alpine) apk upgrade nginx ;;
         ubuntu|debian|raspbian) apt-get install --only-upgrade -y nginx ;;
         centos|rhel|rocky|almalinux|ol|amzn|fedora) "$(_rhel_pkg_cmd)" update -y nginx ;;
     esac
@@ -228,6 +234,7 @@ nginx_uninstall() {
     svc_stop nginx
     detect_os
     case "$OS_ID" in
+        alpine) apk del nginx nginx-mod-stream 2>/dev/null || true ;;
         ubuntu|debian|raspbian) apt-get purge -y nginx nginx-common ;;
         centos|rhel|rocky|almalinux|ol|amzn|fedora) "$(_rhel_pkg_cmd)" remove -y nginx ;;
     esac
@@ -262,6 +269,9 @@ _nginx_ensure_stream_module() {
     detect_os
     log_step "$(t nginx.stream.installing)"
     case "$OS_ID" in
+        alpine)
+            pkg_install nginx-mod-stream 2>/dev/null || true
+            ;;
         ubuntu|debian|raspbian)
             # Retry behind a `pkg_update` — the usual reason the .so is absent is
             # a stale/empty apt index (the module then silently didn't install
