@@ -122,7 +122,23 @@ fi
 # ── Clone or update ───────────────────────────────────────────────────────────
 if [[ -d "$PSM_DIR/.git" ]]; then
     log_step "$(bt "正在更新已安装的 PSM（$PSM_DIR）..." "Updating existing PSM installation at $PSM_DIR ...")"
-    git -C "$PSM_DIR" pull --ff-only
+    # 仓库里只有脚本，用户数据在 /etc/psm。手动改过的脚本会让 git pull 拒绝合并、
+    # 整次更新直接中止 —— 先把改动存成补丁（不丢），再还原到 HEAD。未跟踪文件不动。
+    # 安装/更新都会 chmod +x 脚本，仓库里记为 100644 的文件因此显示为"已修改"，
+    # 上游一改到它们 pull 就失败。权限不算本地修改：关掉 core.fileMode。
+    git -C "$PSM_DIR" config core.fileMode false
+    if ! git -C "$PSM_DIR" diff --quiet HEAD -- 2>/dev/null; then
+        psm_patch="${HOME:-/root}/psm-local-changes-$(date +%Y%m%d%H%M%S).patch"
+        git -C "$PSM_DIR" diff HEAD > "$psm_patch"
+        git -C "$PSM_DIR" reset -q --hard HEAD
+        log_warn "$(bt "$PSM_DIR 中有本地修改，已保存到 $psm_patch 并还原，以便更新。" "Local changes in $PSM_DIR were saved to $psm_patch and reverted so the update can proceed.")"
+    fi
+    if ! git -C "$PSM_DIR" pull --ff-only; then
+        # 历史分叉（本地提交、被改写的浅克隆等）：以远端为准，本地提交仍可从 git reflog 找回
+        log_warn "$(bt "无法快进更新，正在重置到远端 $PSM_BRANCH（本地提交可用 git reflog 找回）..." "Cannot fast-forward; resetting to remote $PSM_BRANCH (local commits stay in git reflog)...")"
+        git -C "$PSM_DIR" fetch origin "$PSM_BRANCH"
+        git -C "$PSM_DIR" reset -q --hard FETCH_HEAD
+    fi
     chmod +x "$PSM_DIR"/*.sh "$PSM_DIR/lib"/*.sh 2>/dev/null || true
     log_ok "$(bt "PSM 已更新。" "PSM updated.")"
 

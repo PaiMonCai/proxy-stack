@@ -30,8 +30,15 @@ psm_update_scripts() {
 
     log_step "$(t update.pulling)"
     if [[ -d "$PSM_ROOT/.git" ]]; then
-        # Discard local script changes — user data lives in /etc/psm/, not in the repo
-        timeout 5 git -C "$PSM_ROOT" checkout -- . 2>/dev/null || true
+        # User data lives in /etc/psm/, not in the repo, so local script edits are
+        # reverted — but saved as a patch first instead of being thrown away.
+        # The chmod +x below is not a local change: ignore file modes.
+        git -C "$PSM_ROOT" config core.fileMode false 2>/dev/null || true
+        if ! git -C "$PSM_ROOT" diff --quiet HEAD -- 2>/dev/null; then
+            local patch; patch="${HOME:-/root}/psm-local-changes-$(date +%Y%m%d%H%M%S).patch"
+            git -C "$PSM_ROOT" diff HEAD > "$patch" 2>/dev/null && log_warn "$(t update.local_saved "$patch")"
+        fi
+        timeout 5 git -C "$PSM_ROOT" reset -q --hard HEAD 2>/dev/null || true
         timeout 30 git -C "$PSM_ROOT" pull --ff-only \
             && log_ok "$(t update.git_done)" \
             || log_error "$(t update.git_fail)"

@@ -154,6 +154,7 @@ MSG[update.backing_up]="Создание резервной копии теку�
 MSG[update.pulling]="Получение последних скриптов PSM..."
 MSG[update.git_done]="Скрипты обновлены через git."
 MSG[update.git_fail]="git pull завершился ошибкой или истекло время ожидания."
+MSG[update.local_saved]="Локальные изменения скриптов сохранены в %s и отменены."
 MSG[update.not_git_reinstall]="Это не git-репозиторий. Повторно выполните команду установки, чтобы переустановить через git."
 MSG[update.xray]="Обновление Xray..."
 MSG[update.singbox]="Обновление sing-box..."
