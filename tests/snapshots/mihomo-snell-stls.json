@@ -1,0 +1,22 @@
+{
+  "listen": "0.0.0.0",
+  "name": "mh-snell-stls",
+  "port": 8444,
+  "psk": "snell-test-psk",
+  "shadow-tls": {
+    "enable": true,
+    "handshake": {
+      "dest": "www.microsoft.com:443"
+    },
+    "users": [
+      {
+        "name": "u1",
+        "password": "stls-test-pass"
+      }
+    ],
+    "version": 3
+  },
+  "type": "snell",
+  "udp": true,
+  "version": 4
+}

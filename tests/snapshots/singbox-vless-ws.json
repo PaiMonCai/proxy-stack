@@ -1,0 +1,22 @@
+{
+  "listen": "::",
+  "listen_port": 9444,
+  "tag": "sb-vless-ws",
+  "tls": {
+    "certificate_path": "/etc/psm/certs/sb-vless-ws.crt",
+    "enabled": true,
+    "key_path": "/etc/psm/certs/sb-vless-ws.key",
+    "server_name": "vless.example.com"
+  },
+  "transport": {
+    "path": "/vl-test",
+    "type": "ws"
+  },
+  "type": "vless",
+  "users": [
+    {
+      "name": "psm",
+      "uuid": "77777777-7777-4777-8777-777777777777"
+    }
+  ]
+}

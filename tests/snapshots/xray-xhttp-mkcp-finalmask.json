@@ -1,0 +1,50 @@
+{
+  "listen": "127.0.0.1",
+  "port": 8445,
+  "protocol": "vless",
+  "settings": {
+    "clients": [
+      {
+        "flow": "",
+        "id": "66666666-6666-4666-8666-666666666666"
+      }
+    ],
+    "decryption": "none",
+    "fallbacks": []
+  },
+  "sniffing": {
+    "destOverride": [
+      "http",
+      "tls",
+      "quic"
+    ],
+    "enabled": true
+  },
+  "streamSettings": {
+    "finalmask": {
+      "udp": [
+        {
+          "settings": {
+            "password": "kcp-test-seed"
+          },
+          "type": "mkcp-aes128gcm"
+        },
+        {
+          "type": "header-srtp"
+        }
+      ]
+    },
+    "kcpSettings": {
+      "congestion": false,
+      "downlinkCapacity": 20,
+      "mtu": 1350,
+      "readBufferSize": 2,
+      "tti": 50,
+      "uplinkCapacity": 5,
+      "writeBufferSize": 2
+    },
+    "network": "kcp",
+    "security": "none"
+  },
+  "tag": "xhttp-kcp"
+}

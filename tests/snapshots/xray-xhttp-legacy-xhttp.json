@@ -1,0 +1,55 @@
+{
+  "listen": "127.0.0.1",
+  "port": 8443,
+  "protocol": "vless",
+  "settings": {
+    "clients": [
+      {
+        "flow": "",
+        "id": "11111111-1111-4111-8111-111111111111"
+      }
+    ],
+    "decryption": "none",
+    "fallbacks": [
+      {
+        "alpn": "h2",
+        "dest": "127.0.0.1:8081",
+        "xver": 0
+      },
+      {
+        "dest": "127.0.0.1:8080",
+        "xver": 0
+      }
+    ]
+  },
+  "sniffing": {
+    "destOverride": [
+      "http",
+      "tls",
+      "quic"
+    ],
+    "enabled": true
+  },
+  "streamSettings": {
+    "network": "xhttp",
+    "security": "tls",
+    "tlsSettings": {
+      "alpn": [
+        "h2",
+        "http/1.1"
+      ],
+      "certificates": [
+        {
+          "certificateFile": "/etc/nginx/ssl/a.example.com/fullchain.pem",
+          "keyFile": "/etc/nginx/ssl/a.example.com/privkey.pem"
+        }
+      ],
+      "serverName": "a.example.com"
+    },
+    "xhttpSettings": {
+      "mode": "auto",
+      "path": "/p"
+    }
+  },
+  "tag": "L1"
+}

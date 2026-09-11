@@ -1,0 +1,22 @@
+{
+  "cipher": "2022-blake3-aes-128-gcm",
+  "listen": "0.0.0.0",
+  "name": "mh-ss-stls",
+  "password": "AAAAAAAAAAAAAAAAAAAAAA==",
+  "port": 8443,
+  "shadow-tls": {
+    "enable": true,
+    "handshake": {
+      "dest": "www.microsoft.com:443"
+    },
+    "users": [
+      {
+        "name": "u1",
+        "password": "stls-test-pass"
+      }
+    ],
+    "version": 3
+  },
+  "type": "shadowsocks",
+  "udp": true
+}

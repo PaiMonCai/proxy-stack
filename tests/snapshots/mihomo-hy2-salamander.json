@@ -1,0 +1,17 @@
+{
+  "alpn": [
+    "h3"
+  ],
+  "certificate": "/etc/psm/certs/mh-hy2-t1.crt",
+  "listen": "0.0.0.0",
+  "masquerade": "https://www.bing.com",
+  "name": "mh-hy2-t1",
+  "obfs": "salamander",
+  "obfs-password": "obfs-test-pass",
+  "port": 8443,
+  "private-key": "/etc/psm/certs/mh-hy2-t1.key",
+  "type": "hysteria2",
+  "users": {
+    "u1": "hy2-test-pass"
+  }
+}

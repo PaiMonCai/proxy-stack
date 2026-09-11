@@ -1,0 +1,21 @@
+{
+  "listen": "::",
+  "listen_port": 9448,
+  "tag": "sb-vless-quic",
+  "tls": {
+    "certificate_path": "/etc/psm/certs/sb-vless-quic.crt",
+    "enabled": true,
+    "key_path": "/etc/psm/certs/sb-vless-quic.key",
+    "server_name": "vless.example.com"
+  },
+  "transport": {
+    "type": "quic"
+  },
+  "type": "vless",
+  "users": [
+    {
+      "name": "psm",
+      "uuid": "77777777-7777-4777-8777-777777777777"
+    }
+  ]
+}

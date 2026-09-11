@@ -1,0 +1,44 @@
+{
+  "listen": "127.0.0.1",
+  "port": 8443,
+  "protocol": "vless",
+  "settings": {
+    "clients": [
+      {
+        "flow": "",
+        "id": "66666666-6666-4666-8666-666666666666"
+      }
+    ],
+    "decryption": "none",
+    "fallbacks": []
+  },
+  "sniffing": {
+    "destOverride": [
+      "http",
+      "tls",
+      "quic"
+    ],
+    "enabled": true
+  },
+  "streamSettings": {
+    "httpupgradeSettings": {
+      "host": "hu.example.com",
+      "path": "/xh-test"
+    },
+    "network": "httpupgrade",
+    "security": "tls",
+    "tlsSettings": {
+      "alpn": [
+        "http/1.1"
+      ],
+      "certificates": [
+        {
+          "certificateFile": "/etc/nginx/ssl/hu.example.com/fullchain.pem",
+          "keyFile": "/etc/nginx/ssl/hu.example.com/privkey.pem"
+        }
+      ],
+      "serverName": "hu.example.com"
+    }
+  },
+  "tag": "xhttp-hu"
+}

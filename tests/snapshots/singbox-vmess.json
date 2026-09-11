@@ -1,0 +1,23 @@
+{
+  "listen": "::",
+  "listen_port": 7553,
+  "tag": "sb-vmess-test",
+  "tls": {
+    "certificate_path": "/etc/psm/certs/sb-vmess-test.crt",
+    "enabled": true,
+    "key_path": "/etc/psm/certs/sb-vmess-test.key",
+    "server_name": "vmess.example.com"
+  },
+  "transport": {
+    "path": "/ws-test",
+    "type": "ws"
+  },
+  "type": "vmess",
+  "users": [
+    {
+      "alterId": 0,
+      "name": "psm",
+      "uuid": "44444444-4444-4444-8444-444444444444"
+    }
+  ]
+}

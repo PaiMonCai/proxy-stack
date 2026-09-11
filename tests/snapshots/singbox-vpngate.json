@@ -1,0 +1,9 @@
+{
+  "domain_resolver": {
+    "server": "psm-local",
+    "strategy": "ipv4_only"
+  },
+  "routing_mark": 8433,
+  "tag": "out-vpngate",
+  "type": "direct"
+}

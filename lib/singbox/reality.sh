@@ -255,7 +255,7 @@ sb_reality_add_node() {
     # proceed anyway. Skipped for local/loopback dests.
     while ! reality_dest_is_local "$dest"; do
         log_step "$(t common.reality.checking_dest "$dest" "$server_name")"
-        if reality_validate_dest "$dest" "$server_name"; then
+        if reality_validate_dest "$dest" "$server_name" && reality_probe_step sing-box "$dest" "$server_name"; then
             [[ -n "$REALITY_DEST_RTT_MS" ]] && log_info "$(t common.reality.dest_ok "$REALITY_DEST_RTT_MS")"
             # 共享 CDN 前端：握手一切正常，但会让 Reality 的回落变成通往整个 CDN 的
             # 免费隧道。告警而非否决 —— 判定可能误伤，风险由使用者自行取舍。

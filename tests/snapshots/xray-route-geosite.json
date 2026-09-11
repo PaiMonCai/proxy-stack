@@ -1,0 +1,8 @@
+{
+  "domain": [
+    "geosite:netflix",
+    "geosite:openai"
+  ],
+  "outboundTag": "out-warp",
+  "type": "field"
+}

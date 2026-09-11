@@ -1,0 +1,13 @@
+{
+  "listen": "127.0.0.1",
+  "name": "mh-socks-test",
+  "port": 1081,
+  "type": "socks",
+  "udp": true,
+  "users": [
+    {
+      "password": "socks-test-password",
+      "username": "psm"
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "certificate": "/etc/psm/certs/mh-vless-xh.crt",
+  "listen": "0.0.0.0",
+  "name": "mh-vless-xh",
+  "port": 9546,
+  "private-key": "/etc/psm/certs/mh-vless-xh.key",
+  "type": "vless",
+  "users": [
+    {
+      "username": "u1",
+      "uuid": "77777777-7777-4777-8777-777777777777"
+    }
+  ],
+  "xhttp-config": {
+    "mode": "auto",
+    "path": "/vl-test"
+  }
+}

@@ -1,0 +1,685 @@
+{
+  "xray_reality": {
+    "tag": "reality-test",
+    "port": 24443,
+    "uuid": "11111111-1111-4111-8111-111111111111",
+    "private_key": "private-test-key",
+    "public_key": "public-test-key",
+    "server_name": "cdn.example.com",
+    "server_names_raw": "cdn.example.com,alt.example.com",
+    "dest": "origin.example.com:443",
+    "flow": "xtls-rprx-vision",
+    "short_ids": [
+      "a1b2c3d4",
+      ""
+    ],
+    "listen_addr": "0.0.0.0"
+  },
+  "xray_vision": {
+    "tag": "vision-test",
+    "port": 3443,
+    "uuid": "22222222-2222-4222-8222-222222222222",
+    "domain": "vision.example.com",
+    "flow": "xtls-rprx-vision",
+    "listen_addr": "127.0.0.1",
+    "fallback_enabled": true
+  },
+  "xray_trojan": {
+    "tag": "trojan-test",
+    "port": 4443,
+    "password": "trojan-test-password",
+    "domain": "trojan.example.com",
+    "listen_addr": "127.0.0.1",
+    "fallback_enabled": true
+  },
+  "singbox_trojan": {
+    "tag": "sb-trojan-test",
+    "port": 5443,
+    "password": "sb-trojan-password",
+    "sni": "trojan.example.com",
+    "cert_path": "/etc/psm/certs/sb-trojan-test.crt",
+    "key_path": "/etc/psm/certs/sb-trojan-test.key",
+    "insecure": 0,
+    "listen_addr": "::"
+  },
+  "mihomo_trojan": {
+    "tag": "mh-trojan-test",
+    "port": 6443,
+    "password": "mh-trojan-password",
+    "sni": "trojan.example.com",
+    "cert_path": "/etc/psm/certs/mh-trojan-test.crt",
+    "key_path": "/etc/psm/certs/mh-trojan-test.key",
+    "insecure": 0,
+    "listen_addr": "0.0.0.0"
+  },
+  "xray_vmess": {
+    "tag": "vmess-test",
+    "port": 7443,
+    "uuid": "33333333-3333-4333-8333-333333333333",
+    "domain": "vmess.example.com",
+    "path": "/ws-test",
+    "listen_addr": "127.0.0.1",
+    "public_port": 443
+  },
+  "singbox_vmess": {
+    "tag": "sb-vmess-test",
+    "port": 7553,
+    "uuid": "44444444-4444-4444-8444-444444444444",
+    "path": "/ws-test",
+    "sni": "vmess.example.com",
+    "cert_path": "/etc/psm/certs/sb-vmess-test.crt",
+    "key_path": "/etc/psm/certs/sb-vmess-test.key",
+    "insecure": 0,
+    "listen_addr": "::"
+  },
+  "mihomo_vmess": {
+    "tag": "mh-vmess-test",
+    "port": 7663,
+    "uuid": "55555555-5555-4555-8555-555555555555",
+    "path": "/ws-test",
+    "sni": "vmess.example.com",
+    "cert_path": "/etc/psm/certs/mh-vmess-test.crt",
+    "key_path": "/etc/psm/certs/mh-vmess-test.key",
+    "insecure": 0,
+    "listen_addr": "0.0.0.0"
+  },
+  "xray_socks": {
+    "tag": "socks-test",
+    "port": 1080,
+    "username": "psm",
+    "password": "socks-test-password",
+    "listen_addr": "0.0.0.0",
+    "public_port": 1080,
+    "udp": true
+  },
+  "singbox_socks": {
+    "tag": "sb-socks-test",
+    "port": 1080,
+    "username": "",
+    "password": "",
+    "listen_addr": "127.0.0.1",
+    "public_port": 1080,
+    "udp": true
+  },
+  "mihomo_socks": {
+    "tag": "mh-socks-test",
+    "port": 1081,
+    "username": "psm",
+    "password": "socks-test-password",
+    "listen_addr": "127.0.0.1",
+    "public_port": 1081,
+    "udp": true
+  },
+  "xray_xhttp_httpupgrade": {
+    "tag": "xhttp-hu",
+    "port": 8443,
+    "uuid": "66666666-6666-4666-8666-666666666666",
+    "path": "/xh-test",
+    "listen_addr": "127.0.0.1",
+    "public_port": 443,
+    "fallback_enabled": false,
+    "mode": "httpupgrade",
+    "domain": "hu.example.com"
+  },
+  "xray_xhttp_h2": {
+    "tag": "xhttp-h2",
+    "port": 8444,
+    "uuid": "66666666-6666-4666-8666-666666666666",
+    "path": "/xh-test",
+    "listen_addr": "127.0.0.1",
+    "public_port": 443,
+    "fallback_enabled": false,
+    "mode": "h2",
+    "domain": "h2.example.com"
+  },
+  "xray_xhttp_mkcp": {
+    "tag": "xhttp-kcp",
+    "port": 8445,
+    "uuid": "66666666-6666-4666-8666-666666666666",
+    "path": "/xh-test",
+    "listen_addr": "127.0.0.1",
+    "public_port": 443,
+    "fallback_enabled": false,
+    "mode": "mkcp",
+    "kcp_seed": "kcp-test-seed",
+    "kcp_header": "srtp",
+    "domain": ""
+  },
+  "xray_xhttp_reality_ws": {
+    "tag": "xhttp-rws",
+    "port": 8446,
+    "uuid": "66666666-6666-4666-8666-666666666666",
+    "path": "/xh-test",
+    "listen_addr": "127.0.0.1",
+    "public_port": 443,
+    "fallback_enabled": false,
+    "mode": "reality-layer",
+    "reality_transport": "ws",
+    "domain": "",
+    "server_name": "www.example.com",
+    "private_key": "PRIV-TEST",
+    "public_key": "PUB-TEST",
+    "short_id": "0123abcd"
+  },
+  "xray_xhttp_legacy": {
+    "tag": "L1",
+    "port": 8443,
+    "uuid": "11111111-1111-4111-8111-111111111111",
+    "domain": "a.example.com",
+    "path": "/p",
+    "mode": "xhttp",
+    "listen_addr": "127.0.0.1",
+    "public_port": 443,
+    "fallback_enabled": true
+  },
+  "xray_upgrade_legacy": {
+    "tag": "L2",
+    "port": 8444,
+    "uuid": "11111111-1111-4111-8111-111111111111",
+    "domain": "b.example.com",
+    "path": "/p",
+    "mode": "upgrade",
+    "listen_addr": "127.0.0.1",
+    "public_port": 443,
+    "fallback_enabled": true
+  },
+  "xray_grpc_legacy": {
+    "tag": "L3",
+    "port": 8445,
+    "uuid": "11111111-1111-4111-8111-111111111111",
+    "domain": "c.example.com",
+    "path": "/svc",
+    "mode": "grpc",
+    "listen_addr": "127.0.0.1",
+    "public_port": 443,
+    "fallback_enabled": true
+  },
+  "xray_reality_legacy": {
+    "tag": "L4",
+    "port": 8446,
+    "uuid": "11111111-1111-4111-8111-111111111111",
+    "domain": "",
+    "path": "/p",
+    "mode": "reality-layer",
+    "listen_addr": "0.0.0.0",
+    "public_port": 8446,
+    "fallback_enabled": false,
+    "server_name": "www.example.com",
+    "private_key": "PRIV",
+    "public_key": "PUB",
+    "short_id": "abcd1234"
+  },
+  "xray_route_all": {
+    "id": "9",
+    "remark": "all traffic",
+    "rule_type": "all",
+    "value": "",
+    "outbound_tag": "out-warp"
+  },
+  "xray_route_geosite": {
+    "id": "1",
+    "remark": "preset",
+    "rule_type": "geosite",
+    "value": "netflix,openai",
+    "outbound_tag": "out-warp"
+  },
+  "singbox_vless_vision": {
+    "tag": "sb-vless-vis",
+    "port": 9443,
+    "uuid": "77777777-7777-4777-8777-777777777777",
+    "flow": "xtls-rprx-vision",
+    "transport": "tcp",
+    "path": "/vl-test",
+    "sni": "vless.example.com",
+    "cert_path": "/etc/psm/certs/sb-vless-vis.crt",
+    "key_path": "/etc/psm/certs/sb-vless-vis.key",
+    "insecure": 0,
+    "listen_addr": "::",
+    "public_port": 9443
+  },
+  "singbox_vless_ws": {
+    "tag": "sb-vless-ws",
+    "port": 9444,
+    "uuid": "77777777-7777-4777-8777-777777777777",
+    "flow": "",
+    "transport": "ws",
+    "path": "/vl-test",
+    "sni": "vless.example.com",
+    "cert_path": "/etc/psm/certs/sb-vless-ws.crt",
+    "key_path": "/etc/psm/certs/sb-vless-ws.key",
+    "insecure": 0,
+    "listen_addr": "::",
+    "public_port": 9444
+  },
+  "singbox_vless_grpc": {
+    "tag": "sb-vless-grpc",
+    "port": 9445,
+    "uuid": "77777777-7777-4777-8777-777777777777",
+    "flow": "",
+    "transport": "grpc",
+    "path": "/vl-test",
+    "sni": "vless.example.com",
+    "cert_path": "/etc/psm/certs/sb-vless-grpc.crt",
+    "key_path": "/etc/psm/certs/sb-vless-grpc.key",
+    "insecure": 0,
+    "listen_addr": "::",
+    "public_port": 9445
+  },
+  "singbox_vless_h2": {
+    "tag": "sb-vless-h2",
+    "port": 9446,
+    "uuid": "77777777-7777-4777-8777-777777777777",
+    "flow": "",
+    "transport": "http",
+    "path": "/vl-test",
+    "sni": "vless.example.com",
+    "cert_path": "/etc/psm/certs/sb-vless-h2.crt",
+    "key_path": "/etc/psm/certs/sb-vless-h2.key",
+    "insecure": 0,
+    "listen_addr": "::",
+    "public_port": 9446
+  },
+  "singbox_vless_hu": {
+    "tag": "sb-vless-hu",
+    "port": 9447,
+    "uuid": "77777777-7777-4777-8777-777777777777",
+    "flow": "",
+    "transport": "httpupgrade",
+    "path": "/vl-test",
+    "sni": "vless.example.com",
+    "cert_path": "/etc/psm/certs/sb-vless-hu.crt",
+    "key_path": "/etc/psm/certs/sb-vless-hu.key",
+    "insecure": 0,
+    "listen_addr": "::",
+    "public_port": 9447
+  },
+  "singbox_vless_quic": {
+    "tag": "sb-vless-quic",
+    "port": 9448,
+    "uuid": "77777777-7777-4777-8777-777777777777",
+    "flow": "",
+    "transport": "quic",
+    "path": "/vl-test",
+    "sni": "vless.example.com",
+    "cert_path": "/etc/psm/certs/sb-vless-quic.crt",
+    "key_path": "/etc/psm/certs/sb-vless-quic.key",
+    "insecure": 0,
+    "listen_addr": "::",
+    "public_port": 9448
+  },
+  "mihomo_vless_vision": {
+    "tag": "mh-vless-vis",
+    "port": 9543,
+    "uuid": "77777777-7777-4777-8777-777777777777",
+    "flow": "xtls-rprx-vision",
+    "transport": "tcp",
+    "path": "/vl-test",
+    "sni": "vless.example.com",
+    "cert_path": "/etc/psm/certs/mh-vless-vis.crt",
+    "key_path": "/etc/psm/certs/mh-vless-vis.key",
+    "insecure": 0,
+    "listen_addr": "0.0.0.0",
+    "public_port": 9543
+  },
+  "mihomo_vless_ws": {
+    "tag": "mh-vless-ws",
+    "port": 9544,
+    "uuid": "77777777-7777-4777-8777-777777777777",
+    "flow": "",
+    "transport": "ws",
+    "path": "/vl-test",
+    "sni": "vless.example.com",
+    "cert_path": "/etc/psm/certs/mh-vless-ws.crt",
+    "key_path": "/etc/psm/certs/mh-vless-ws.key",
+    "insecure": 0,
+    "listen_addr": "0.0.0.0",
+    "public_port": 9544
+  },
+  "mihomo_vless_grpc": {
+    "tag": "mh-vless-grpc",
+    "port": 9545,
+    "uuid": "77777777-7777-4777-8777-777777777777",
+    "flow": "",
+    "transport": "grpc",
+    "path": "/vl-test",
+    "sni": "vless.example.com",
+    "cert_path": "/etc/psm/certs/mh-vless-grpc.crt",
+    "key_path": "/etc/psm/certs/mh-vless-grpc.key",
+    "insecure": 0,
+    "listen_addr": "0.0.0.0",
+    "public_port": 9545
+  },
+  "mihomo_vless_xhttp": {
+    "tag": "mh-vless-xh",
+    "port": 9546,
+    "uuid": "77777777-7777-4777-8777-777777777777",
+    "flow": "",
+    "transport": "xhttp",
+    "path": "/vl-test",
+    "sni": "vless.example.com",
+    "cert_path": "/etc/psm/certs/mh-vless-xh.crt",
+    "key_path": "/etc/psm/certs/mh-vless-xh.key",
+    "insecure": 0,
+    "listen_addr": "0.0.0.0",
+    "public_port": 9546
+  },
+  "singbox_reality": {
+    "tag": "sb-reality-test",
+    "port": 25443,
+    "uuid": "33333333-3333-4333-8333-333333333333",
+    "private_key": "sb-private-test-key",
+    "public_key": "sb-public-test-key",
+    "server_name": "sb.example.com",
+    "dest": "origin.example.net:8443",
+    "flow": "xtls-rprx-vision",
+    "short_ids": [
+      "01020304"
+    ],
+    "listen_addr": "::"
+  },
+  "mihomo_reality": {
+    "tag": "mh-reality-test",
+    "port": 26443,
+    "uuid": "44444444-4444-4444-8444-444444444444",
+    "private_key": "mh-private-test-key",
+    "public_key": "mh-public-test-key",
+    "server_name": "mh.example.com",
+    "dest": "origin.example.org:443",
+    "flow": "",
+    "short_ids": [
+      "deadbeef",
+      "cafebabe"
+    ],
+    "listen_addr": "0.0.0.0"
+  },
+  "singbox_snell_v5_obfs": {
+    "tag": "sb-snell-v5-test",
+    "port": 26160,
+    "version": 5,
+    "psk": "snell-v5-test-psk",
+    "listen": "::",
+    "obfs_mode": "http",
+    "obfs_host": "bing.com"
+  },
+  "singbox_snell_v6": {
+    "tag": "sb-snell-v6-test",
+    "port": 26161,
+    "version": 6,
+    "psk": "snell-v6-test-psk",
+    "listen": "::",
+    "obfs_mode": "",
+    "obfs_host": ""
+  },
+  "xray_reality_min_client_ver": {
+    "tag": "reality-mcv-test",
+    "port": 24443,
+    "uuid": "11111111-1111-4111-8111-111111111111",
+    "private_key": "private-test-key",
+    "public_key": "public-test-key",
+    "server_name": "cdn.example.com",
+    "server_names_raw": "cdn.example.com,alt.example.com",
+    "dest": "origin.example.com:443",
+    "flow": "xtls-rprx-vision",
+    "short_ids": [
+      "a1b2c3d4",
+      ""
+    ],
+    "listen_addr": "0.0.0.0",
+    "min_client_ver": "1.8.0"
+  },
+  "xray_vpngate": {
+    "tag": "out-vpngate",
+    "remark": "VPNGate residential exit",
+    "protocol": "vpngate",
+    "address": "psmvg0",
+    "port": 0,
+    "mark": 8433
+  },
+  "singbox_vpngate": {
+    "tag": "out-vpngate",
+    "remark": "VPNGate residential exit",
+    "protocol": "vpngate",
+    "address": "psmvg0",
+    "port": 0,
+    "mark": 8433
+  },
+  "mihomo_vpngate": {
+    "name": "vpngate-out",
+    "remark": "VPNGate residential exit",
+    "type": "vpngate",
+    "server": "psmvg0",
+    "port": 0,
+    "mark": 8433
+  },
+  "ruleset_raw": {
+    "list": "# comment line\nDOMAIN,chat.openai.com\nDOMAIN,chat.openai.com\nDOMAIN-SUFFIX,openai.com\nDOMAIN-SUFFIX,oaistatic.com\nDOMAIN-KEYWORD,openai\nIP-CIDR,24.199.123.28/32,no-resolve\nIP-CIDR6,2607:6bc0::/32\nIP-ASN,20473\nPROCESS-NAME,ChatGPT\nDOMAIN,bad domain with spaces\nIP-CIDR,203.0.113.7\n"
+  },
+  "ruleset_parsed": {
+    "domain": [
+      "chat.openai.com"
+    ],
+    "domain_suffix": [
+      "oaistatic.com",
+      "openai.com"
+    ],
+    "domain_keyword": [
+      "openai"
+    ],
+    "ip_cidr": [
+      "203.0.113.7/32",
+      "24.199.123.28/32",
+      "2607:6bc0::/32"
+    ],
+    "dropped": {
+      "IP-ASN": 1,
+      "PROCESS-NAME": 1
+    },
+    "total": 7
+  },
+  "xray_ruleset": {
+    "rule": {
+      "id": "r1",
+      "remark": "rule set openai",
+      "rule_type": "ruleset",
+      "value": "openai",
+      "outbound_tag": "out-vpngate"
+    },
+    "parsed": {
+      "domain": [
+        "chat.openai.com"
+      ],
+      "domain_suffix": [
+        "openai.com",
+        "oaistatic.com"
+      ],
+      "domain_keyword": [
+        "openai"
+      ],
+      "ip_cidr": [
+        "24.199.123.28/32",
+        "2607:6bc0::/32"
+      ],
+      "dropped": {
+        "IP-ASN": 1
+      },
+      "total": 6
+    }
+  },
+  "xray_xhttp_reality_grpc": {
+    "tag": "xhttp-rgrpc",
+    "port": 8446,
+    "uuid": "66666666-6666-4666-8666-666666666666",
+    "path": "grpc-svc",
+    "listen_addr": "127.0.0.1",
+    "public_port": 443,
+    "fallback_enabled": false,
+    "mode": "reality-layer",
+    "reality_transport": "grpc",
+    "domain": "",
+    "server_name": "www.example.com",
+    "private_key": "PRIV-TEST",
+    "public_key": "PUB-TEST",
+    "short_id": "0123abcd"
+  },
+  "singbox_hy2_salamander": {
+    "tag": "sb-hy2-t1",
+    "port": 8443,
+    "password": "hy2-test-pass",
+    "domain": "",
+    "sni": "www.bing.com",
+    "cert_path": "/etc/psm/certs/sb-hy2-t1.crt",
+    "key_path": "/etc/psm/certs/sb-hy2-t1.key",
+    "insecure": 1,
+    "up": 0,
+    "down": 0,
+    "masquerade": "https://www.bing.com",
+    "obfs_pass": "obfs-test-pass"
+  },
+  "singbox_hy2_gecko": {
+    "tag": "sb-hy2-t2",
+    "port": 8443,
+    "password": "hy2-test-pass",
+    "domain": "",
+    "sni": "www.bing.com",
+    "cert_path": "/etc/psm/certs/sb-hy2-t1.crt",
+    "key_path": "/etc/psm/certs/sb-hy2-t1.key",
+    "insecure": 1,
+    "up": 0,
+    "down": 0,
+    "masquerade": "https://www.bing.com",
+    "obfs_pass": "obfs-test-pass",
+    "obfs_type": "gecko"
+  },
+  "mihomo_hy2_salamander": {
+    "tag": "mh-hy2-t1",
+    "port": 8443,
+    "password": "hy2-test-pass",
+    "domain": "",
+    "sni": "www.bing.com",
+    "cert_path": "/etc/psm/certs/mh-hy2-t1.crt",
+    "key_path": "/etc/psm/certs/mh-hy2-t1.key",
+    "insecure": 1,
+    "up": 0,
+    "down": 0,
+    "masquerade": "https://www.bing.com",
+    "obfs_pass": "obfs-test-pass"
+  },
+  "mihomo_hy2_gecko": {
+    "tag": "mh-hy2-t2",
+    "port": 8443,
+    "password": "hy2-test-pass",
+    "domain": "",
+    "sni": "www.bing.com",
+    "cert_path": "/etc/psm/certs/mh-hy2-t1.crt",
+    "key_path": "/etc/psm/certs/mh-hy2-t1.key",
+    "insecure": 1,
+    "up": 0,
+    "down": 0,
+    "masquerade": "https://www.bing.com",
+    "obfs_pass": "obfs-test-pass",
+    "obfs_type": "gecko"
+  },
+  "xray_hy2_plain": {
+    "tag": "xhy2-t1",
+    "port": 8443,
+    "password": "hy2-test-pass",
+    "domain": "",
+    "sni": "www.bing.com",
+    "cert_path": "/etc/psm/certs/xhy2-t1.crt",
+    "key_path": "/etc/psm/certs/xhy2-t1.key",
+    "insecure": 1,
+    "listen_addr": "0.0.0.0",
+    "obfs_pass": ""
+  },
+  "xray_hy2_gecko": {
+    "tag": "xhy2-t2",
+    "port": 8443,
+    "password": "hy2-test-pass",
+    "domain": "",
+    "sni": "www.bing.com",
+    "cert_path": "/etc/psm/certs/xhy2-t1.crt",
+    "key_path": "/etc/psm/certs/xhy2-t1.key",
+    "insecure": 1,
+    "listen_addr": "0.0.0.0",
+    "obfs_pass": "obfs-test-pass",
+    "obfs_type": "gecko"
+  },
+  "xray_vision_enc": {
+    "tag": "vision-enc",
+    "port": 3443,
+    "uuid": "22222222-2222-4222-8222-222222222222",
+    "domain": "vision.example.com",
+    "flow": "xtls-rprx-vision",
+    "listen_addr": "127.0.0.1",
+    "fallback_enabled": true,
+    "vless_decryption": "mlkem768x25519plus.native.600s.-Ml20GaEPBtF8DcrC2-UN1uhUTooSNoaXiS90RvsrlA",
+    "vless_encryption": "mlkem768x25519plus.native.0rtt.1eqI8XtD9jbAMeXDA8R8KhnofJhvtcJedDz7gUiu1Dk"
+  },
+  "xray_reality_enc": {
+    "tag": "reality-enc",
+    "port": 24443,
+    "uuid": "11111111-1111-4111-8111-111111111111",
+    "private_key": "private-test-key",
+    "public_key": "public-test-key",
+    "server_name": "cdn.example.com",
+    "server_names_raw": "cdn.example.com,alt.example.com",
+    "dest": "origin.example.com:443",
+    "flow": "xtls-rprx-vision",
+    "short_ids": [
+      "a1b2c3d4",
+      ""
+    ],
+    "listen_addr": "0.0.0.0",
+    "vless_decryption": "mlkem768x25519plus.native.600s.-Ml20GaEPBtF8DcrC2-UN1uhUTooSNoaXiS90RvsrlA",
+    "vless_encryption": "mlkem768x25519plus.native.0rtt.1eqI8XtD9jbAMeXDA8R8KhnofJhvtcJedDz7gUiu1Dk"
+  },
+  "xray_xhttp_enc": {
+    "tag": "xhttp-enc",
+    "port": 8443,
+    "uuid": "11111111-1111-4111-8111-111111111111",
+    "domain": "a.example.com",
+    "path": "/p",
+    "mode": "xhttp",
+    "listen_addr": "127.0.0.1",
+    "public_port": 443,
+    "fallback_enabled": true,
+    "vless_decryption": "mlkem768x25519plus.native.600s.-Ml20GaEPBtF8DcrC2-UN1uhUTooSNoaXiS90RvsrlA",
+    "vless_encryption": "mlkem768x25519plus.native.0rtt.1eqI8XtD9jbAMeXDA8R8KhnofJhvtcJedDz7gUiu1Dk"
+  },
+  "mihomo_vless_enc": {
+    "tag": "mh-vless-enc",
+    "port": 9543,
+    "uuid": "77777777-7777-4777-8777-777777777777",
+    "flow": "xtls-rprx-vision",
+    "transport": "tcp",
+    "path": "/vl-test",
+    "sni": "vless.example.com",
+    "cert_path": "/etc/psm/certs/mh-vless-vis.crt",
+    "key_path": "/etc/psm/certs/mh-vless-vis.key",
+    "insecure": 0,
+    "listen_addr": "0.0.0.0",
+    "public_port": 9543,
+    "vless_decryption": "mlkem768x25519plus.native.600s.-Ml20GaEPBtF8DcrC2-UN1uhUTooSNoaXiS90RvsrlA",
+    "vless_encryption": "mlkem768x25519plus.native.0rtt.1eqI8XtD9jbAMeXDA8R8KhnofJhvtcJedDz7gUiu1Dk"
+  },
+  "mihomo_ss_stls": {
+    "tag": "mh-ss-stls",
+    "port": 8443,
+    "method": "2022-blake3-aes-128-gcm",
+    "password": "AAAAAAAAAAAAAAAAAAAAAA==",
+    "listen": "0.0.0.0",
+    "stls_sni": "www.microsoft.com",
+    "stls_password": "stls-test-pass"
+  },
+  "mihomo_snell_stls": {
+    "tag": "mh-snell-stls",
+    "port": 8444,
+    "version": 4,
+    "psk": "snell-test-psk",
+    "listen": "0.0.0.0",
+    "obfs_mode": "",
+    "obfs_host": "",
+    "stls_sni": "www.microsoft.com",
+    "stls_password": "stls-test-pass"
+  }
+}

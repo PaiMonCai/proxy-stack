@@ -1,0 +1,15 @@
+{
+  "certificate": "/etc/psm/certs/mh-vless-ws.crt",
+  "listen": "0.0.0.0",
+  "name": "mh-vless-ws",
+  "port": 9544,
+  "private-key": "/etc/psm/certs/mh-vless-ws.key",
+  "type": "vless",
+  "users": [
+    {
+      "username": "u1",
+      "uuid": "77777777-7777-4777-8777-777777777777"
+    }
+  ],
+  "ws-path": "/vl-test"
+}

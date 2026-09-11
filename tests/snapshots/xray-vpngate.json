@@ -1,0 +1,12 @@
+{
+  "protocol": "freedom",
+  "settings": {
+    "domainStrategy": "UseIPv4"
+  },
+  "streamSettings": {
+    "sockopt": {
+      "mark": 8433
+    }
+  },
+  "tag": "out-vpngate"
+}

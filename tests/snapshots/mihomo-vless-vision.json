@@ -1,0 +1,15 @@
+{
+  "certificate": "/etc/psm/certs/mh-vless-vis.crt",
+  "listen": "0.0.0.0",
+  "name": "mh-vless-vis",
+  "port": 9543,
+  "private-key": "/etc/psm/certs/mh-vless-vis.key",
+  "type": "vless",
+  "users": [
+    {
+      "flow": "xtls-rprx-vision",
+      "username": "u1",
+      "uuid": "77777777-7777-4777-8777-777777777777"
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "listen": "::",
+  "listen_port": 9443,
+  "tag": "sb-vless-vis",
+  "tls": {
+    "certificate_path": "/etc/psm/certs/sb-vless-vis.crt",
+    "enabled": true,
+    "key_path": "/etc/psm/certs/sb-vless-vis.key",
+    "server_name": "vless.example.com"
+  },
+  "type": "vless",
+  "users": [
+    {
+      "flow": "xtls-rprx-vision",
+      "name": "psm",
+      "uuid": "77777777-7777-4777-8777-777777777777"
+    }
+  ]
+}

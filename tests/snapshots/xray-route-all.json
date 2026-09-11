@@ -1,0 +1,5 @@
+{
+  "network": "tcp,udp",
+  "outboundTag": "out-warp",
+  "type": "field"
+}

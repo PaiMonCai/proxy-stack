@@ -1,0 +1,9 @@
+{
+  "listen": "::",
+  "listen_port": 26160,
+  "obfs_mode": "http",
+  "psk": "snell-v5-test-psk",
+  "tag": "sb-snell-v5-test",
+  "type": "snell",
+  "version": 5
+}

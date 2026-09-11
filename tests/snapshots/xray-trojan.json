@@ -1,0 +1,49 @@
+{
+  "listen": "127.0.0.1",
+  "port": 4443,
+  "protocol": "trojan",
+  "settings": {
+    "clients": [
+      {
+        "password": "trojan-test-password"
+      }
+    ],
+    "fallbacks": [
+      {
+        "alpn": "h2",
+        "dest": "127.0.0.1:8081",
+        "xver": 0
+      },
+      {
+        "dest": "127.0.0.1:8080",
+        "xver": 0
+      }
+    ]
+  },
+  "sniffing": {
+    "destOverride": [
+      "http",
+      "tls",
+      "quic"
+    ],
+    "enabled": true
+  },
+  "streamSettings": {
+    "network": "tcp",
+    "security": "tls",
+    "tlsSettings": {
+      "alpn": [
+        "h2",
+        "http/1.1"
+      ],
+      "certificates": [
+        {
+          "certificateFile": "/etc/nginx/ssl/trojan.example.com/fullchain.pem",
+          "keyFile": "/etc/nginx/ssl/trojan.example.com/privkey.pem"
+        }
+      ],
+      "minVersion": "1.2"
+    }
+  },
+  "tag": "trojan-test"
+}

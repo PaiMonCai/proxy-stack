@@ -73,6 +73,7 @@ _vg_csv_age() {
 }
 
 # vg_fetch_list [1=强制刷新]
+# shellcheck disable=SC2120  # optional argument: no current caller forces a refresh
 vg_fetch_list() {
     local force="${1:-0}"
     _vg_init

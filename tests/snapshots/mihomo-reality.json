@@ -1,0 +1,23 @@
+{
+  "listen": "0.0.0.0",
+  "name": "mh-reality-test",
+  "port": 26443,
+  "reality-config": {
+    "dest": "origin.example.org:443",
+    "private-key": "mh-private-test-key",
+    "server-names": [
+      "mh.example.com"
+    ],
+    "short-id": [
+      "deadbeef",
+      "cafebabe"
+    ]
+  },
+  "type": "vless",
+  "users": [
+    {
+      "username": "u1",
+      "uuid": "44444444-4444-4444-8444-444444444444"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "listen": "::",
+  "listen_port": 9447,
+  "tag": "sb-vless-hu",
+  "tls": {
+    "certificate_path": "/etc/psm/certs/sb-vless-hu.crt",
+    "enabled": true,
+    "key_path": "/etc/psm/certs/sb-vless-hu.key",
+    "server_name": "vless.example.com"
+  },
+  "transport": {
+    "path": "/vl-test",
+    "type": "httpupgrade"
+  },
+  "type": "vless",
+  "users": [
+    {
+      "name": "psm",
+      "uuid": "77777777-7777-4777-8777-777777777777"
+    }
+  ]
+}

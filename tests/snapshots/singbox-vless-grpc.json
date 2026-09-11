@@ -1,0 +1,22 @@
+{
+  "listen": "::",
+  "listen_port": 9445,
+  "tag": "sb-vless-grpc",
+  "tls": {
+    "certificate_path": "/etc/psm/certs/sb-vless-grpc.crt",
+    "enabled": true,
+    "key_path": "/etc/psm/certs/sb-vless-grpc.key",
+    "server_name": "vless.example.com"
+  },
+  "transport": {
+    "service_name": "vl-test",
+    "type": "grpc"
+  },
+  "type": "vless",
+  "users": [
+    {
+      "name": "psm",
+      "uuid": "77777777-7777-4777-8777-777777777777"
+    }
+  ]
+}

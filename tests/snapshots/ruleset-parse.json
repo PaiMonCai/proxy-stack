@@ -1,0 +1,22 @@
+{
+  "domain": [
+    "chat.openai.com"
+  ],
+  "domain_keyword": [
+    "openai"
+  ],
+  "domain_suffix": [
+    "oaistatic.com",
+    "openai.com"
+  ],
+  "dropped": {
+    "IP-ASN": 1,
+    "PROCESS-NAME": 1
+  },
+  "ip_cidr": [
+    "203.0.113.7/32",
+    "24.199.123.28/32",
+    "2607:6bc0::/32"
+  ],
+  "total": 7
+}

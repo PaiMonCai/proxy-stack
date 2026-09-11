@@ -1,0 +1,15 @@
+{
+  "certificate": "/etc/psm/certs/mh-vless-grpc.crt",
+  "grpc-service-name": "vl-test",
+  "listen": "0.0.0.0",
+  "name": "mh-vless-grpc",
+  "port": 9545,
+  "private-key": "/etc/psm/certs/mh-vless-grpc.key",
+  "type": "vless",
+  "users": [
+    {
+      "username": "u1",
+      "uuid": "77777777-7777-4777-8777-777777777777"
+    }
+  ]
+}

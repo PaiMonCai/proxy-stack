@@ -418,7 +418,7 @@ reality_add_node() {
             source "$LIB_DIR/xray/reality_watchdog.sh"
             while ! reality_dest_is_local "$dest"; do
                 log_step "$(t common.reality.checking_dest "$dest" "$_sn")"
-                if _rwd_check_dest "$dest" "$_sn"; then
+                if _rwd_check_dest "$dest" "$_sn" && reality_probe_step xray "$dest" "$_sn"; then
                     [[ -n "$RWD_CHECK_RTT_MS" ]] && log_info "$(t common.reality.dest_ok "$RWD_CHECK_RTT_MS")"
                     # 共享 CDN 前端：握手一切正常，但会让 Reality 的回落变成通往整个
                     # CDN 的免费隧道。告警而非否决 —— 判定可能误伤，风险由使用者取舍。

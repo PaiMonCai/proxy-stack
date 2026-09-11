@@ -17,8 +17,6 @@ __pycache__/
 # macOS
 .DS_Store
 
-# Local dev notes, tests, and CI tooling (keep out of the public repo)
+# Local dev notes (keep out of the public repo). Tests and CI are public:
+# tests/, scripts/ci.sh and .github/workflows run on every push.
 docs/
-tests/
-scripts/ci.sh
-.github/

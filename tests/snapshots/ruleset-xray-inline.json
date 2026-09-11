@@ -1,0 +1,20 @@
+[
+  {
+    "domain": [
+      "full:chat.openai.com",
+      "domain:openai.com",
+      "domain:oaistatic.com",
+      "keyword:openai"
+    ],
+    "outboundTag": "out-vpngate",
+    "type": "field"
+  },
+  {
+    "ip": [
+      "24.199.123.28/32",
+      "2607:6bc0::/32"
+    ],
+    "outboundTag": "out-vpngate",
+    "type": "field"
+  }
+]

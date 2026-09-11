@@ -1,0 +1,6 @@
+{
+  "ip-version": "ipv4",
+  "name": "vpngate-out",
+  "routing-mark": 8433,
+  "type": "direct"
+}

@@ -1,0 +1,24 @@
+{
+  "listen": "0.0.0.0",
+  "port": 1080,
+  "protocol": "socks",
+  "settings": {
+    "accounts": [
+      {
+        "pass": "socks-test-password",
+        "user": "psm"
+      }
+    ],
+    "auth": "password",
+    "udp": true
+  },
+  "sniffing": {
+    "destOverride": [
+      "http",
+      "tls",
+      "quic"
+    ],
+    "enabled": true
+  },
+  "tag": "socks-test"
+}

@@ -1,0 +1,9 @@
+{
+  "listen": "::",
+  "listen_port": 26161,
+  "mode": "default",
+  "psk": "snell-v6-test-psk",
+  "tag": "sb-snell-v6-test",
+  "type": "snell",
+  "version": 6
+}

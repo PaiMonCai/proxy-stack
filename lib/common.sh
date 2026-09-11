@@ -749,6 +749,145 @@ reality_dest_is_local() {
     return 1
 }
 
+# Free TCP port on loopback for throwaway listeners (probes).
+_psm_free_port() {
+    local p i
+    for i in $(seq 1 50); do
+        p=$(( RANDOM % 20000 + 40000 ))
+        ss -Hltn "sport = :$p" 2>/dev/null | grep -q . || { printf '%s' "$p"; return 0; }
+    done
+    return 1
+}
+
+# Real-core REALITY probe. The openssl checks in reality_validate_dest cannot
+# tell whether a target actually works with REALITY: measured, www.microsoft.com
+# passes all of them, yet an Xray REALITY node pointed at it never completes a
+# handshake. Start a throwaway server + client of the same core on loopback and
+# push one HTTPS request to the target through the tunnel.
+# Returns 0 = works, 1 = handshake/tunnel failed (REALITY_PROBE_REASON),
+# 2 = not tested (core or curl missing) — callers treat 2 as unknown, not bad.
+reality_probe_core() {
+    local core="$1" dest="$2" sni="$3" bin
+    REALITY_PROBE_REASON=""
+    case "$core" in
+        xray)     bin="${XRAY_BIN:-/usr/local/bin/xray}" ;;
+        sing-box) bin="${SB_BIN:-/usr/local/bin/sing-box}" ;;
+        mihomo)   bin="${MH_BIN:-/usr/local/bin/mihomo}" ;;
+        *) REALITY_PROBE_REASON="bad_core"; return 2 ;;
+    esac
+    [[ -x "$bin" ]] || { REALITY_PROBE_REASON="no_core"; return 2; }
+    command -v curl >/dev/null 2>&1 || { REALITY_PROBE_REASON="no_curl"; return 2; }
+
+    local host port
+    if [[ "$dest" =~ ^\[([^]]+)\]:([0-9]+)$ ]]; then
+        host="${BASH_REMATCH[1]}"; port="${BASH_REMATCH[2]}"
+    else
+        host="${dest%:*}"; port="${dest##*:}"
+    fi
+    [[ -n "$host" && "$port" =~ ^[0-9]+$ ]] || { REALITY_PROBE_REASON="bad_dest"; return 1; }
+
+    local dir sp cp uuid keys priv pub
+    dir=$(mktemp -d) || { REALITY_PROBE_REASON="tmp_failed"; return 2; }
+    if ! sp=$(_psm_free_port) || ! cp=$(_psm_free_port); then
+        rm -rf "$dir"; REALITY_PROBE_REASON="no_port"; return 2
+    fi
+    [[ "$sp" == "$cp" ]] && cp=$(( sp + 1 ))
+    uuid=$(uuid_gen)
+    case "$core" in
+        xray) keys=$("$bin" x25519 2>/dev/null) ;;
+        *)    keys=$("$bin" generate reality-keypair 2>/dev/null) ;;
+    esac
+    # Xray prints "PrivateKey:" + "Password (PublicKey):" (older: "Public key:");
+    # sing-box and mihomo print "PrivateKey:" + "PublicKey:".
+    priv=$(awk -F': *' 'tolower($1) ~ /private/ {print $2; exit}' <<<"$keys")
+    pub=$(awk -F': *' 'tolower($1) ~ /public|password/ {print $2; exit}' <<<"$keys")
+    [[ -n "$priv" && -n "$pub" ]] || { rm -rf "$dir"; REALITY_PROBE_REASON="keygen_failed"; return 2; }
+
+    local -a sargs cargs
+    case "$core" in
+        xray)
+            jq -n --argjson p "$sp" --arg u "$uuid" --arg d "$dest" --arg sn "$sni" --arg k "$priv" '{
+              log: {loglevel: "none"},
+              inbounds: [{listen: "127.0.0.1", port: $p, protocol: "vless",
+                settings: {clients: [{id: $u}], decryption: "none"},
+                streamSettings: {network: "tcp", security: "reality",
+                  realitySettings: {dest: $d, serverNames: [$sn], privateKey: $k, shortIds: [""]}}}],
+              outbounds: [{protocol: "freedom"}]}' > "$dir/s.json"
+            jq -n --argjson c "$cp" --argjson p "$sp" --arg u "$uuid" --arg sn "$sni" --arg k "$pub" '{
+              log: {loglevel: "none"},
+              inbounds: [{listen: "127.0.0.1", port: $c, protocol: "socks", settings: {udp: false}}],
+              outbounds: [{protocol: "vless",
+                settings: {vnext: [{address: "127.0.0.1", port: $p, users: [{id: $u, encryption: "none"}]}]},
+                streamSettings: {network: "tcp", security: "reality",
+                  realitySettings: {serverName: $sn, publicKey: $k, shortId: "", fingerprint: "chrome"}}}]}' > "$dir/c.json"
+            sargs=(run -c "$dir/s.json"); cargs=(run -c "$dir/c.json") ;;
+        sing-box)
+            jq -n --argjson p "$sp" --arg u "$uuid" --arg h "$host" --argjson hp "$port" --arg sn "$sni" --arg k "$priv" '{
+              log: {level: "panic"},
+              inbounds: [{type: "vless", listen: "127.0.0.1", listen_port: $p, users: [{uuid: $u}],
+                tls: {enabled: true, server_name: $sn,
+                  reality: {enabled: true, handshake: {server: $h, server_port: $hp},
+                            private_key: $k, short_id: [""]}}}],
+              outbounds: [{type: "direct"}]}' > "$dir/s.json"
+            jq -n --argjson c "$cp" --argjson p "$sp" --arg u "$uuid" --arg sn "$sni" --arg k "$pub" '{
+              log: {level: "panic"},
+              inbounds: [{type: "mixed", listen: "127.0.0.1", listen_port: $c}],
+              outbounds: [{type: "vless", server: "127.0.0.1", server_port: $p, uuid: $u,
+                tls: {enabled: true, server_name: $sn, utls: {enabled: true, fingerprint: "chrome"},
+                  reality: {enabled: true, public_key: $k, short_id: ""}}}]}' > "$dir/c.json"
+            sargs=(run -c "$dir/s.json"); cargs=(run -c "$dir/c.json") ;;
+        mihomo)
+            mkdir -p "$dir/s" "$dir/c"
+            jq -n --argjson p "$sp" --arg u "$uuid" --arg d "$dest" --arg sn "$sni" --arg k "$priv" '{
+              "log-level": "silent",
+              listeners: [{name: "probe", type: "vless", listen: "127.0.0.1", port: $p,
+                users: [{username: "probe", uuid: $u}],
+                "reality-config": {dest: $d, "private-key": $k, "short-id": [""], "server-names": [$sn]}}],
+              rules: ["MATCH,DIRECT"]}' > "$dir/s/config.yaml"
+            jq -n --argjson c "$cp" --argjson p "$sp" --arg u "$uuid" --arg sn "$sni" --arg k "$pub" '{
+              "log-level": "silent", "mixed-port": $c, "bind-address": "127.0.0.1", "allow-lan": false,
+              proxies: [{name: "probe", type: "vless", server: "127.0.0.1", port: $p, uuid: $u,
+                network: "tcp", tls: true, servername: $sn, "client-fingerprint": "chrome",
+                "reality-opts": {"public-key": $k, "short-id": ""}}],
+              rules: ["MATCH,probe"]}' > "$dir/c/config.yaml"
+            sargs=(-d "$dir/s" -f "$dir/s/config.yaml"); cargs=(-d "$dir/c" -f "$dir/c/config.yaml") ;;
+    esac
+
+    local spid cpid code i
+    "$bin" "${sargs[@]}" >"$dir/s.log" 2>&1 & spid=$!
+    "$bin" "${cargs[@]}" >"$dir/c.log" 2>&1 & cpid=$!
+    for i in $(seq 1 25); do
+        ss -Hltn "sport = :$sp" 2>/dev/null | grep -q . \
+            && ss -Hltn "sport = :$cp" 2>/dev/null | grep -q . && break
+        sleep 0.2
+    done
+    # One retry: a single slow response must not condemn a working target.
+    for i in 1 2; do
+        code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
+            -x "socks5h://127.0.0.1:$cp" "https://${sni}/" 2>/dev/null)
+        [[ "$code" =~ ^[1-5][0-9][0-9]$ ]] && break
+    done
+    kill "$spid" "$cpid" 2>/dev/null
+    wait "$spid" "$cpid" 2>/dev/null
+    rm -rf "$dir"
+    [[ "$code" =~ ^[1-5][0-9][0-9]$ ]] && return 0
+    REALITY_PROBE_REASON="handshake_failed"
+    return 1
+}
+
+# Probe step for the interactive flows: returns 1 only when the probe ran and
+# failed (a missing core or curl never blocks), and leaves the reason where
+# each flow's failure message reads it.
+reality_probe_step() {
+    local rc
+    log_step "$(t common.reality.probing_core "$1")"
+    reality_probe_core "$1" "$2" "$3"; rc=$?
+    (( rc == 1 )) || return 0
+    REALITY_DEST_REASON="core_handshake"; RWD_CHECK_REASON="core_handshake"
+    log_warn "$(t common.reality.core_probe_failed "$1" "$3")"
+    return 1
+}
+
 # Advisory validator: is <dest> a usable Reality camouflage target for <sni>?
 # openssl-only distillation of xray/reality_watchdog.sh's _rwd_check_dest, so
 # sing-box/mihomo (which never load the watchdog) can vet a pair too. Asserts the

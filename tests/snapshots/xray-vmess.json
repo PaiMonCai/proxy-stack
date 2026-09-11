@@ -1,0 +1,41 @@
+{
+  "listen": "127.0.0.1",
+  "port": 7443,
+  "protocol": "vmess",
+  "settings": {
+    "clients": [
+      {
+        "id": "33333333-3333-4333-8333-333333333333"
+      }
+    ]
+  },
+  "sniffing": {
+    "destOverride": [
+      "http",
+      "tls",
+      "quic"
+    ],
+    "enabled": true
+  },
+  "streamSettings": {
+    "network": "websocket",
+    "security": "tls",
+    "tlsSettings": {
+      "alpn": [
+        "http/1.1"
+      ],
+      "certificates": [
+        {
+          "certificateFile": "/etc/nginx/ssl/vmess.example.com/fullchain.pem",
+          "keyFile": "/etc/nginx/ssl/vmess.example.com/privkey.pem"
+        }
+      ],
+      "minVersion": "1.2",
+      "serverName": "vmess.example.com"
+    },
+    "wsSettings": {
+      "path": "/ws-test"
+    }
+  },
+  "tag": "vmess-test"
+}

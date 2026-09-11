@@ -1,0 +1,27 @@
+{
+  "listen": "::",
+  "listen_port": 25443,
+  "tag": "sb-reality-test",
+  "tls": {
+    "enabled": true,
+    "reality": {
+      "enabled": true,
+      "handshake": {
+        "server": "origin.example.net",
+        "server_port": 8443
+      },
+      "private_key": "sb-private-test-key",
+      "short_id": [
+        "01020304"
+      ]
+    },
+    "server_name": "sb.example.com"
+  },
+  "type": "vless",
+  "users": [
+    {
+      "flow": "xtls-rprx-vision",
+      "uuid": "33333333-3333-4333-8333-333333333333"
+    }
+  ]
+}

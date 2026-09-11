@@ -1,0 +1,16 @@
+{
+  "certificate": "/etc/psm/certs/mh-vmess-test.crt",
+  "listen": "0.0.0.0",
+  "name": "mh-vmess-test",
+  "port": 7663,
+  "private-key": "/etc/psm/certs/mh-vmess-test.key",
+  "type": "vmess",
+  "users": [
+    {
+      "alterId": 0,
+      "username": "u1",
+      "uuid": "55555555-5555-4555-8555-555555555555"
+    }
+  ],
+  "ws-path": "/ws-test"
+}

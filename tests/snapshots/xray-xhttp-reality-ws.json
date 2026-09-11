@@ -1,0 +1,43 @@
+{
+  "listen": "127.0.0.1",
+  "port": 8446,
+  "protocol": "vless",
+  "settings": {
+    "clients": [
+      {
+        "flow": "",
+        "id": "66666666-6666-4666-8666-666666666666"
+      }
+    ],
+    "decryption": "none",
+    "fallbacks": []
+  },
+  "sniffing": {
+    "destOverride": [
+      "http",
+      "tls",
+      "quic"
+    ],
+    "enabled": true
+  },
+  "streamSettings": {
+    "network": "xhttp",
+    "realitySettings": {
+      "dest": "www.example.com:443",
+      "privateKey": "PRIV-TEST",
+      "serverNames": [
+        "www.example.com"
+      ],
+      "shortIds": [
+        "0123abcd"
+      ],
+      "show": false
+    },
+    "security": "reality",
+    "xhttpSettings": {
+      "mode": "auto",
+      "path": "/xh-test"
+    }
+  },
+  "tag": "xhttp-rws"
+}

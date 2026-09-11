@@ -1,0 +1,51 @@
+{
+  "listen": "127.0.0.1",
+  "port": 3443,
+  "protocol": "vless",
+  "settings": {
+    "clients": [
+      {
+        "flow": "xtls-rprx-vision",
+        "id": "22222222-2222-4222-8222-222222222222"
+      }
+    ],
+    "decryption": "none",
+    "fallbacks": [
+      {
+        "alpn": "h2",
+        "dest": "127.0.0.1:8081",
+        "xver": 0
+      },
+      {
+        "dest": "127.0.0.1:8080",
+        "xver": 0
+      }
+    ]
+  },
+  "sniffing": {
+    "destOverride": [
+      "http",
+      "tls",
+      "quic"
+    ],
+    "enabled": true
+  },
+  "streamSettings": {
+    "network": "tcp",
+    "security": "tls",
+    "tlsSettings": {
+      "alpn": [
+        "h2",
+        "http/1.1"
+      ],
+      "certificates": [
+        {
+          "certificateFile": "/etc/nginx/ssl/vision.example.com/fullchain.pem",
+          "keyFile": "/etc/nginx/ssl/vision.example.com/privkey.pem"
+        }
+      ],
+      "minVersion": "1.2"
+    }
+  },
+  "tag": "vision-test"
+}

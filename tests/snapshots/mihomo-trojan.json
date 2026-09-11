@@ -1,0 +1,14 @@
+{
+  "certificate": "/etc/psm/certs/mh-trojan-test.crt",
+  "listen": "0.0.0.0",
+  "name": "mh-trojan-test",
+  "port": 6443,
+  "private-key": "/etc/psm/certs/mh-trojan-test.key",
+  "type": "trojan",
+  "users": [
+    {
+      "password": "mh-trojan-password",
+      "username": "u1"
+    }
+  ]
+}

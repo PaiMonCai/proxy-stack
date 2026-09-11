@@ -69,6 +69,16 @@ Common field options are accepted directly, for example --uuid, --password,
 Use --set for future/protocol-specific fields. Values for numeric, boolean and
 array fields are typed automatically; --set-json is always interpreted as JSON.
 
+Shared 443 (Nginx SNI routing), for xray reality/vision/xhttp/trojan/vmess and
+sing-box/mihomo reality/anytls/trojan/vmess/vless:
+  --mount-443        listen on 127.0.0.1:PORT and route the node's SNI from the
+                     public 443 (Nginx is installed when missing). update keeps
+                     the route in step with --port / SNI changes, delete removes it.
+
+REALITY targets are tested with a real handshake through the node's core before
+the node is created (a target can pass every TLS check and still not work with
+REALITY). --skip-dest-probe skips that test.
+
 Queries redact credentials by default. Use --show-secrets only in a protected
 terminal or pipeline. Export intentionally includes the credentials required by
 clients. --store-only skips core validation/restart and is intended for offline
@@ -705,11 +715,12 @@ _node_cli_validate() {
             case "$mode" in xhttp|upgrade|ws|grpc|reality-layer|httpupgrade|h2|mkcp) ;; *) _node_cli_err "unsupported XHTTP mode: $mode"; return 1 ;; esac
             ;;
     esac
-    # Creating a loopback listener also requires transactional Nginx SNI
-    # map/certificate changes. Keep that cross-module workflow interactive.
+    # A loopback listener for a 443-capable pair only makes sense behind the
+    # shared SNI map, which --mount-443 sets up (see _node_cli_mount_apply).
     if [[ "$context" == "add" ]] && _node_cli_fronted_pair "$core" "$proto" \
+        && [[ "${_NODE_CLI_MOUNT443:-0}" != "1" ]] \
         && [[ "$(printf '%s' "$json" | jq -r '.listen_addr // ""')" == "127.0.0.1" ]]; then
-        _node_cli_err "creating an Nginx-fronted $core node is not supported non-interactively; use a direct listen_addr or the interactive menu"
+        _node_cli_err "a loopback $core/$proto node is only reachable through the shared 443; pass --mount-443 instead of --listen-addr 127.0.0.1"
         return 1
     fi
     return 0
@@ -718,22 +729,13 @@ _node_cli_validate() {
 _node_cli_validate_update_side_effects() {
     local core="$1" proto="$2" old="$3" new="$4"
     _node_cli_fronted_pair "$core" "$proto" || return 0
-    if printf '%s' "$old" | jq -e '.listen_addr == "127.0.0.1"' >/dev/null 2>&1 \
-        || printf '%s' "$new" | jq -e '.listen_addr == "127.0.0.1"' >/dev/null 2>&1; then
-        if ! jq -en --argjson old "$old" --argjson new "$new" --arg proto "$proto" '
-          if $proto == "reality" then
-            [$old.listen_addr,$old.port,$old.server_name] == [$new.listen_addr,$new.port,$new.server_name]
-          elif $proto == "vision" then
-            [$old.listen_addr,$old.port,$old.domain] == [$new.listen_addr,$new.port,$new.domain]
-          elif $proto == "anytls" then
-            [$old.listen_addr,$old.port,$old.sni] == [$new.listen_addr,$new.port,$new.sni]
-          else
-            [$old.listen_addr,$old.port,$old.domain,$old.server_name] ==
-            [$new.listen_addr,$new.port,$new.domain,$new.server_name]
-          end' >/dev/null; then
-            _node_cli_err "changing Nginx routing fields on a loopback $core node is not supported non-interactively; use the interactive menu"
-            return 1
-        fi
+    # Port and SNI changes on a mounted node are carried into the SNI map after
+    # the apply (_node_cli_cmd_update). Moving a node between direct listening
+    # and the shared 443 changes its public address, so that is delete + add.
+    if ! jq -en --argjson old "$old" --argjson new "$new" \
+        '($old.listen_addr // "") == ($new.listen_addr // "")' >/dev/null; then
+        _node_cli_err "moving a $core node between direct listening and the shared 443 is not an update; delete it and add it again (with or without --mount-443)"
+        return 1
     fi
 }
 
@@ -762,8 +764,8 @@ _node_cli_transport() {
 }
 
 # Core/protocol pairs that support Nginx 443 SNI fronting (listen_addr
-# 127.0.0.1 + shared SNI map). Mutating those non-interactively would require
-# transactional Nginx map/certificate changes, so the CLI refuses them.
+# 127.0.0.1 + shared SNI map): add --mount-443, and update/delete keep the
+# map in step (_node_cli_mount_precheck / _mount_apply / _mount_remove).
 _node_cli_fronted_pair() {
     case "$1/$2" in
         xray/reality|xray/vision|xray/xhttp|xray/trojan|xray/vmess) return 0 ;;
@@ -791,6 +793,87 @@ _node_cli_port_is_listening() {
         fi
         return
     fi
+    return 1
+}
+
+# The SNI that routes a node through the shared 443 map: the same key the
+# interactive flows write with _sni_add_entry <key> 127.0.0.1:<port>.
+_node_cli_sni_key() {   # <proto> <node-json>
+    printf '%s' "$2" | jq -r --arg p "$1" '
+      if $p == "reality" then (.server_name // "")
+      elif ($p == "xhttp" or $p == "vision" or $p == "trojan" or $p == "vmess")
+        then (if (.domain // "") != "" then .domain else (.server_name // .sni // "") end)
+      else (.sni // .domain // "") end'
+}
+
+_node_cli_is_mounted() {   # <core> <proto> <node-json>
+    _node_cli_fronted_pair "$1" "$2" \
+        && printf '%s' "$3" | jq -e '.listen_addr == "127.0.0.1"' >/dev/null 2>&1
+}
+
+# Before a node is committed: Nginx with the stream SNI map must exist (it is
+# installed when missing) and <key> must not already route to another backend.
+# [own-port] is the node's current loopback port on update/replace: the entry
+# still points there until the change is applied, and that is not a conflict.
+_node_cli_mount_precheck() {   # <key> <port> [own-port]
+    local key="$1" port="$2" own="${3:-}" cur
+    # shellcheck source=/dev/null
+    source "$LIB_DIR/nginx.sh" || return 1
+    if ! is_installed nginx || [[ ! -f "$(_sni_map_file)" ]]; then
+        nginx_ensure_stream_sni </dev/null >&2 || { _node_cli_err "could not set up Nginx for the shared 443"; return 1; }
+    fi
+    if cur=$(_sni_lookup_entry "$key") && [[ "$cur" != "127.0.0.1:${port}" ]] \
+        && [[ -z "$own" || "$cur" != "127.0.0.1:${own}" ]]; then
+        _node_cli_err "SNI $key already routes to $cur on the shared 443"
+        return 1
+    fi
+}
+
+# Write the route and prove Nginx accepted it; _sni_add_entry itself reports
+# success even when the reload failed. A rejected route is taken out again.
+_node_cli_mount_apply() {   # <key> <port>
+    _sni_add_entry "$1" "127.0.0.1:$2" >&2 || return 1
+    if ! nginx -t >/dev/null 2>&1; then
+        _sni_remove_entry "$1" >&2 || true
+        return 1
+    fi
+}
+
+# Drop <key> from the map, but only while it still routes to this node's port.
+_node_cli_mount_remove() {   # <key> <port>
+    local cur
+    # shellcheck source=/dev/null
+    source "$LIB_DIR/nginx.sh" || return 0
+    cur=$(_sni_lookup_entry "$1") || return 0
+    [[ "$cur" == "127.0.0.1:$2" ]] && _sni_remove_entry "$1" >&2
+    return 0
+}
+
+# Real handshake through the core before a REALITY target is accepted (see
+# reality_probe_core). Skipped with --skip-dest-probe and when the target did
+# not change; a machine that cannot run the probe (no core, no curl) passes.
+_node_cli_probe_reality() {   # <core> <proto> <node> [old-node]
+    local core="$1" proto="$2" node="$3" old="${4:-}" pc sn dest
+    [[ "${_NODE_CLI_SKIP_PROBE:-0}" == "1" ]] && return 0
+    case "$proto" in
+        reality) pc="$core" ;;
+        xhttp) [[ "$(printf '%s' "$node" | jq -r '.mode')" == "reality-layer" ]] || return 0; pc=xray ;;
+        *) return 0 ;;
+    esac
+    sn=$(printf '%s' "$node" | jq -r '.server_name // empty')
+    [[ -n "$sn" ]] || return 0
+    dest=$(printf '%s' "$node" | jq -r --arg sn "$sn" '.dest // ($sn + ":443")')
+    reality_dest_is_local "$dest" && return 0
+    if [[ -n "$old" ]] && jq -en --argjson a "$old" --argjson b "$node" \
+        '[$a.server_name, $a.dest] == [$b.server_name, $b.dest]' >/dev/null 2>&1; then
+        return 0
+    fi
+    reality_probe_core "$pc" "$dest" "$sn"
+    case $? in
+        0) return 0 ;;
+        2) _node_cli_err "note: REALITY target not probed (${REALITY_PROBE_REASON})"; return 0 ;;
+    esac
+    _node_cli_err "$pc cannot complete a REALITY handshake with $sn ($dest) as the target: the node would install, but no client could connect. Pick another --server-name/--dest, or pass --skip-dest-probe"
     return 1
 }
 
@@ -936,6 +1019,7 @@ _node_cli_parse_mutation() {
     # tag is passed as $1 (possibly empty), remaining arguments follow.
     local tag="$1"; shift
     local core="" proto="" input="" store_only=0 replace=0 if_exists=0 yes=0 as_json=0 show_secrets=0
+    local mount443=0 skip_probe=0
     local json='{}' arg key value
     local -a sets=() sets_json=() unsets=()
     while (( $# )); do
@@ -954,6 +1038,8 @@ _node_cli_parse_mutation() {
             --yes|-y) yes=1; shift ;;
             --json) as_json=1; shift ;;
             --show-secrets) show_secrets=1; shift ;;
+            --mount-443) mount443=1; shift ;;
+            --skip-dest-probe) skip_probe=1; shift ;;
             --tag) [[ $# -ge 2 ]] || { _node_cli_err '--tag requires a value'; return 2; }; tag="$2"; shift 2 ;;
             --*)
                 key=${arg#--}
@@ -989,11 +1075,13 @@ _node_cli_parse_mutation() {
     jq -cn --arg core "$core" --arg proto "$proto" --argjson node "$json" \
         --argjson store_only "$store_only" --argjson replace "$replace" \
         --argjson if_exists "$if_exists" --argjson yes "$yes" --argjson out_json "$as_json" \
-        --argjson show_secrets "$show_secrets" \
+        --argjson show_secrets "$show_secrets" --argjson mount443 "$mount443" \
+        --argjson skip_probe "$skip_probe" \
         '{core:$core,protocol:$proto,node:$node,
           store_only:($store_only == 1), replace:($replace == 1),
           if_exists:($if_exists == 1), yes:($yes == 1), json:($out_json == 1),
-          show_secrets:($show_secrets == 1)}'
+          show_secrets:($show_secrets == 1), mount_443:($mount443 == 1),
+          skip_dest_probe:($skip_probe == 1)}'
 }
 
 _node_cli_cmd_add() {
@@ -1011,6 +1099,15 @@ _node_cli_cmd_add() {
     _node_cli_pair_supported "$core" "$proto" || { _node_cli_err "unsupported core/protocol: $core/$proto"; return 2; }
     node=$(printf '%s' "$state" | jq -c '.node')
     if ! printf '%s' "$node" | jq -e '.port != null' >/dev/null; then _node_cli_err 'add requires --port or input.port'; return 2; fi
+    local store_only mount_key="" old_mount_key="" old_port=""
+    store_only=$(printf '%s' "$state" | jq -r '.store_only')
+    _NODE_CLI_SKIP_PROBE=$(printf '%s' "$state" | jq -r '.skip_dest_probe | if . then 1 else 0 end')
+    _NODE_CLI_MOUNT443=0
+    if [[ "$(printf '%s' "$state" | jq -r '.mount_443')" == "true" ]]; then
+        _node_cli_fronted_pair "$core" "$proto" || { _node_cli_err "--mount-443 is not available for $core/$proto"; return 2; }
+        _NODE_CLI_MOUNT443=1
+        node=$(printf '%s' "$node" | jq -c '.listen_addr = "127.0.0.1" | .public_port = 443')
+    fi
     _node_cli_lock_acquire || return 1
     path=$(_node_cli_store_path "$core" "$proto")
     old=$(_node_cli_read_store "$path") || { _node_cli_lock_release; return 1; }
@@ -1022,6 +1119,9 @@ _node_cli_cmd_add() {
     node=$(_node_cli_defaults "$core" "$proto" "$node") || { _node_cli_lock_release; return 1; }
     _node_cli_validate "$core" "$proto" "$node" add || { _node_cli_lock_release; return 2; }
     tag=$(printf '%s' "$node" | jq -r '.tag'); port=$(printf '%s' "$node" | jq -r '.port')
+    if [[ "$store_only" != "true" ]]; then
+        _node_cli_probe_reality "$core" "$proto" "$node" "$existing" || { _node_cli_lock_release; return 2; }
+    fi
     if [[ -n "$existing" ]]; then
         if jq -e --argjson a "$existing" --argjson b "$node" -n '$a == $b' >/dev/null; then
             _node_cli_lock_release
@@ -1040,8 +1140,28 @@ _node_cli_cmd_add() {
         _node_cli_err "$(_node_cli_transport "$proto") port $port is already held by a running process"
         return 1
     fi
+    if [[ "$store_only" != "true" ]] && _node_cli_is_mounted "$core" "$proto" "$node"; then
+        mount_key=$(_node_cli_sni_key "$proto" "$node")
+        [[ -n "$mount_key" ]] || { _node_cli_lock_release; _node_cli_err "a node on the shared 443 needs its SNI (--server-name, --domain or --sni)"; return 2; }
+        _node_cli_mount_precheck "$mount_key" "$port" \
+            "$([[ -n "$existing" ]] && printf '%s' "$existing" | jq -r '.port')" || { _node_cli_lock_release; return 1; }
+        if [[ -n "$existing" ]] && _node_cli_is_mounted "$core" "$proto" "$existing"; then
+            old_mount_key=$(_node_cli_sni_key "$proto" "$existing")
+            old_port=$(printf '%s' "$existing" | jq -r '.port')
+        fi
+    fi
     new=$(printf '%s' "$old" | jq -c --arg tag "$tag" --argjson node "$node" 'del(.[] | select(.tag == $tag)) + [$node]') || { _node_cli_lock_release; return 1; }
     _node_cli_commit_store "$core" "$proto" "$new" "$(printf '%s' "$state" | jq -r '.store_only|if . then 1 else 0 end')" || { _node_cli_lock_release; return 1; }
+    if [[ -n "$mount_key" ]]; then
+        if ! _node_cli_mount_apply "$mount_key" "$port"; then
+            # Nothing may point at a route Nginx refused: put the node store back.
+            _node_cli_commit_store "$core" "$proto" "$old" 0 >/dev/null 2>&1 || true
+            _node_cli_lock_release
+            _node_cli_err "Nginx did not accept the 443 route for $mount_key; the node was rolled back"
+            return 1
+        fi
+        [[ -n "$old_mount_key" && "$old_mount_key" != "$mount_key" ]] && _node_cli_mount_remove "$old_mount_key" "$old_port"
+    fi
     _node_cli_lock_release
     envelope=$(printf '[%s]' "$node" | _node_cli_envelope "$core" "$proto" | jq -c '.[0]')
     changed=created; [[ -n "$existing" ]] && changed=replaced
@@ -1081,6 +1201,12 @@ _node_cli_cmd_update() {
     _node_cli_validate_update_side_effects "$core" "$proto" "$old_node" "$node" || return 2
     _node_cli_validate "$core" "$proto" "$node" update || return 2
     port=$(printf '%s' "$node" | jq -r '.port')
+    local upd_store_only mount_key="" old_mount_key="" old_port
+    upd_store_only=$(printf '%s' "$state" | jq -r '.store_only')
+    _NODE_CLI_SKIP_PROBE=$(printf '%s' "$state" | jq -r '.skip_dest_probe | if . then 1 else 0 end')
+    if [[ "$upd_store_only" != "true" ]]; then
+        _node_cli_probe_reality "$core" "$proto" "$node" "$old_node" || return 2
+    fi
     if jq -e --argjson a "$old_node" --argjson b "$node" -n '$a == $b' >/dev/null; then
         _node_cli_result unchanged "$item" "$(printf '%s' "$state" | jq -r '.json|if . then 1 else 0 end')" "$(printf '%s' "$state" | jq -r '.show_secrets|if . then 1 else 0 end')"
         return 0
@@ -1092,8 +1218,28 @@ _node_cli_cmd_update() {
     if ! printf '%s' "$store" | jq -e --arg tag "$tag" --argjson old "$old_node" 'first(.[] | select(.tag == $tag)) == $old' >/dev/null; then
         _node_cli_lock_release; _node_cli_err "node changed concurrently: $core/$proto/$tag"; return 1
     fi
+    if [[ "$upd_store_only" != "true" ]] && _node_cli_is_mounted "$core" "$proto" "$node"; then
+        mount_key=$(_node_cli_sni_key "$proto" "$node")
+        old_mount_key=$(_node_cli_sni_key "$proto" "$old_node")
+        old_port=$(printf '%s' "$old_node" | jq -r '.port')
+        if [[ "$mount_key" == "$old_mount_key" && "$port" == "$old_port" ]]; then
+            mount_key=""   # routing unchanged
+        else
+            [[ -n "$mount_key" ]] || { _node_cli_lock_release; _node_cli_err "a node on the shared 443 needs its SNI"; return 2; }
+            _node_cli_mount_precheck "$mount_key" "$port" "$old_port" || { _node_cli_lock_release; return 1; }
+        fi
+    fi
     new=$(printf '%s' "$store" | jq -c --arg tag "$tag" --argjson node "$node" 'map(if .tag == $tag then $node else . end)') || { _node_cli_lock_release; return 1; }
     _node_cli_commit_store "$core" "$proto" "$new" "$(printf '%s' "$state" | jq -r '.store_only|if . then 1 else 0 end')" || { _node_cli_lock_release; return 1; }
+    if [[ -n "$mount_key" ]]; then
+        if ! _node_cli_mount_apply "$mount_key" "$port"; then
+            _node_cli_commit_store "$core" "$proto" "$store" 0 >/dev/null 2>&1 || true
+            _node_cli_lock_release
+            _node_cli_err "Nginx did not accept the 443 route for $mount_key; the update was rolled back"
+            return 1
+        fi
+        [[ "$old_mount_key" != "$mount_key" ]] && _node_cli_mount_remove "$old_mount_key" "$old_port"
+    fi
     _node_cli_lock_release
     envelope=$(printf '[%s]' "$node" | _node_cli_envelope "$core" "$proto" | jq -c '.[0]')
     _node_cli_result updated "$envelope" "$(printf '%s' "$state" | jq -r '.json|if . then 1 else 0 end')" "$(printf '%s' "$state" | jq -r '.show_secrets|if . then 1 else 0 end')"
@@ -1123,12 +1269,6 @@ _node_cli_cmd_delete() {
         return 1
     fi
     core=$(printf '%s' "$item" | jq -r '.core'); proto=$(printf '%s' "$item" | jq -r '.protocol'); old_node=$(printf '%s' "$item" | jq -c '.node')
-    if [[ "$(printf '%s' "$state" | jq -r '.store_only')" != "true" ]] \
-        && _node_cli_fronted_pair "$core" "$proto" \
-        && printf '%s' "$old_node" | jq -e '.listen_addr == "127.0.0.1"' >/dev/null 2>&1; then
-        _node_cli_err "deleting an Nginx-fronted $core node is not supported non-interactively; use the interactive menu"
-        return 2
-    fi
     _node_cli_lock_acquire || return 1
     path=$(_node_cli_store_path "$core" "$proto"); store=$(_node_cli_read_store "$path") || { _node_cli_lock_release; return 1; }
     if ! printf '%s' "$store" | jq -e --arg tag "$tag" --argjson old "$old_node" 'first(.[] | select(.tag == $tag)) == $old' >/dev/null; then
@@ -1136,6 +1276,10 @@ _node_cli_cmd_delete() {
     fi
     new=$(printf '%s' "$store" | jq -c --arg tag "$tag" 'del(.[] | select(.tag == $tag))') || { _node_cli_lock_release; return 1; }
     _node_cli_commit_store "$core" "$proto" "$new" "$(printf '%s' "$state" | jq -r '.store_only|if . then 1 else 0 end')" || { _node_cli_lock_release; return 1; }
+    if [[ "$(printf '%s' "$state" | jq -r '.store_only')" != "true" ]] \
+        && _node_cli_is_mounted "$core" "$proto" "$old_node"; then
+        _node_cli_mount_remove "$(_node_cli_sni_key "$proto" "$old_node")" "$(printf '%s' "$old_node" | jq -r '.port')"
+    fi
     _node_cli_lock_release
     _node_cli_cleanup_deleted_metadata "$tag"
     envelope=$(printf '[%s]' "$old_node" | _node_cli_envelope "$core" "$proto" | jq -c '.[0]')
