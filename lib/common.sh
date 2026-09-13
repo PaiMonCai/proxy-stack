@@ -341,16 +341,24 @@ _svc_log_file() { printf '/var/log/psm/%s.log' "$1"; }
 # openrc-run word-splits it itself.
 psm_write_openrc_service() {
     # [env_file]：可选，存在时整份导出给守护进程（systemd 的 EnvironmentFile=- 同义）
+    # [run_as] [pre_cmd]：以非 root 用户运行（附 bind/net_admin 两项能力）；pre_cmd
+    # 在 start_pre 里以 root 执行（lib/coreperm.sh 修权限）。supervise-daemon 在降权
+    # 之后才打开 output_log，所以日志文件要先建好、归该用户所有。
     local name="$1" description="$2" command="$3" command_args="$4" env_file="${5:-}" env_line=""
+    local run_as="${6:-}" pre_cmd="${7:-}" user_lines="command_user=\"root\"" log_line=""
     _uses_openrc || { log_error "$(t common.err.need_init "$name")"; return 1; }
     [[ -n "$env_file" ]] && env_line="[ -f \"${env_file}\" ] && { set -a; . \"${env_file}\"; set +a; }"
+    if [[ -n "$run_as" ]]; then
+        user_lines="command_user=\"${run_as}:${run_as}\""$'\n'"capabilities=\"^cap_net_bind_service,^cap_net_admin\""
+        log_line="checkpath -f -o ${run_as}:${run_as} -m 0640 $(_svc_log_file "$name")"
+    fi
     cat > "/etc/init.d/${name}" <<EOF
 #!/sbin/openrc-run
 # Managed by PSM
 description="${description}"
 command="${command}"
 command_args="${command_args}"
-command_user="root"
+${user_lines}
 pidfile="/run/${name}.pid"
 supervisor="supervise-daemon"
 supervise_daemon_args="--respawn-delay 5"
@@ -368,6 +376,8 @@ depend() {
 
 start_pre() {
     checkpath -d -m 0755 /var/log/psm
+    ${log_line}
+    ${pre_cmd}
 }
 EOF
     chmod 755 "/etc/init.d/${name}"
@@ -627,6 +637,8 @@ xray_test_restart() {
     # xray_rebuild_from_stores runs every module's apply in a row and tests the
     # finished config once; testing each half-rebuilt intermediate would fail.
     [[ -n "${PSM_XRAY_DEFER_RESTART:-}" ]] && return 0
+    # psm-core must be able to read what PSM just wrote (lib/coreperm.sh)
+    source "$LIB_DIR/coreperm.sh" && psm_core_nonroot_ensure xray
     # Camouflage sites from before the h2 fallback (lib/nginx.sh); only defined
     # once a module that uses the fallback has loaded lib/nginx.sh.
     declare -F nginx_upgrade_http_camouflage >/dev/null && nginx_upgrade_http_camouflage

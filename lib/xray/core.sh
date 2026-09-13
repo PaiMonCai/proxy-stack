@@ -254,22 +254,29 @@ EOF
 }
 
 _write_xray_service() {
+    # The core runs as psm-core; systemd resolves User= before ExecStartPre,
+    # so the user has to exist when the unit is written (lib/coreperm.sh).
+    source "$LIB_DIR/coreperm.sh"; psm_core_user_ensure
     if ! _uses_systemd; then
-        psm_write_openrc_service xray "Xray Service" "$XRAY_BIN" "run -config $XRAY_CFG"
+        psm_write_openrc_service xray "Xray Service" "$XRAY_BIN" "run -config $XRAY_CFG" "" \
+            "$PSM_CORE_USER" "/bin/bash $LIB_DIR/coreperm.sh xray"
         return
     fi
-    cat > "$XRAY_SERVICE" <<'EOF'
+    cat > "$XRAY_SERVICE" <<EOF
 [Unit]
 Description=Xray Service
 Documentation=https://github.com/xtls
 After=network.target nss-lookup.target
 
 [Service]
-User=root
+User=${PSM_CORE_USER}
+Group=${PSM_CORE_USER}
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 NoNewPrivileges=true
-ExecStart=/usr/local/bin/xray run -config /usr/local/etc/xray/config.json
+# '+' runs this as root: it keeps what psm-core must read readable (lib/coreperm.sh)
+ExecStartPre=+/bin/bash ${LIB_DIR}/coreperm.sh xray
+ExecStart=${XRAY_BIN} run -config ${XRAY_CFG}
 Restart=on-failure
 RestartSec=5s
 LimitNOFILE=1048576

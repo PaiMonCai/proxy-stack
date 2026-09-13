@@ -187,8 +187,9 @@ manager.sh --health-report         # 发送一次每日体检报告
 ### 诊断与节点自动化 CLI
 
 ```bash
-psm doctor                         # 只读系统与配置诊断
+psm doctor                         # 系统与配置诊断（只读）
 psm doctor --json                  # 结构化 JSON 报告
+psm doctor --fix                   # 自动修复：重启停掉的内核、恢复开机自启、重建端口跳跃规则、续期证书等，修完再检查一遍
 
 psm node list --json               # 列出三内核的全部节点
 psm node show xray reality node-1 --json

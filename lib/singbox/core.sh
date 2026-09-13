@@ -166,8 +166,10 @@ EOF
 }
 
 _sb_write_service() {
+    source "$LIB_DIR/coreperm.sh"; psm_core_user_ensure   # User= is resolved before ExecStartPre
     if ! _uses_systemd; then
-        psm_write_openrc_service sing-box "sing-box service" "$SB_BIN" "run -c $SB_CFG"
+        psm_write_openrc_service sing-box "sing-box service" "$SB_BIN" "run -c $SB_CFG" "" \
+            "$PSM_CORE_USER" "/bin/bash $LIB_DIR/coreperm.sh sing-box"
         return
     fi
     cat > "$SB_SERVICE" <<EOF
@@ -177,10 +179,13 @@ Documentation=https://sing-box.sagernet.org
 After=network.target nss-lookup.target network-online.target
 
 [Service]
-User=root
+User=${PSM_CORE_USER}
+Group=${PSM_CORE_USER}
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 NoNewPrivileges=true
+# '+' runs this as root: it keeps what psm-core must read readable (lib/coreperm.sh)
+ExecStartPre=+/bin/bash ${LIB_DIR}/coreperm.sh sing-box
 ExecStart=${SB_BIN} run -c ${SB_CFG}
 ExecReload=/bin/kill -HUP \$MAINPID
 Restart=on-failure
@@ -349,6 +354,7 @@ sb_test_restart() {
     local test_out
     if test_out=$("$SB_BIN" check -c "$SB_CFG" 2>&1); then
         rm -f "${SB_CFG}.prev"
+        source "$LIB_DIR/coreperm.sh" && psm_core_nonroot_ensure sing-box
         svc_restart sing-box && { log_ok "$(t sb.restarted)"; return 0; }
         log_error "$(t sb.restart_fail)"
         return 1

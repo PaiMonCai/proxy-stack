@@ -100,8 +100,10 @@ EOF
 }
 
 _mh_write_service() {
+    source "$LIB_DIR/coreperm.sh"; psm_core_user_ensure   # User= is resolved before ExecStartPre
     if ! _uses_systemd; then
-        psm_write_openrc_service mihomo "mihomo Meta service" "$MH_BIN" "-d $MH_CFG_DIR -f $MH_CFG" "$MH_ENV"
+        psm_write_openrc_service mihomo "mihomo Meta service" "$MH_BIN" "-d $MH_CFG_DIR -f $MH_CFG" "$MH_ENV" \
+            "$PSM_CORE_USER" "/bin/bash $LIB_DIR/coreperm.sh mihomo"
         return
     fi
     cat > "$MH_SERVICE" <<EOF
@@ -111,11 +113,14 @@ Documentation=https://wiki.metacubex.one
 After=network.target nss-lookup.target network-online.target
 
 [Service]
-User=root
+User=${PSM_CORE_USER}
+Group=${PSM_CORE_USER}
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 NoNewPrivileges=true
 EnvironmentFile=-${MH_ENV}
+# '+' runs this as root: it keeps what psm-core must read readable (lib/coreperm.sh)
+ExecStartPre=+/bin/bash ${LIB_DIR}/coreperm.sh mihomo
 ExecStart=${MH_BIN} -d ${MH_CFG_DIR} -f ${MH_CFG}
 Restart=on-failure
 RestartSec=5s
@@ -319,6 +324,7 @@ mh_test_restart() {
     if test_out=$("$MH_BIN" -t -d "$MH_CFG_DIR" -f "$MH_CFG" 2>&1); then
         rm -f "${MH_CFG}.prev"
         _mh_sync_safe_paths
+        source "$LIB_DIR/coreperm.sh" && psm_core_nonroot_ensure mihomo
         svc_restart mihomo && { log_ok "$(t mh.restarted)"; return 0; }
         log_error "$(t mh.restart_fail)"
         return 1

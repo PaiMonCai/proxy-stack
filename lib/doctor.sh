@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# doctor.sh — read-only PSM host/configuration diagnostics.
+# doctor.sh — PSM host/configuration diagnostics. Read-only unless --fix is
+# given: then every problem a check knows a safe repair for is repaired, and
+# everything is checked again. Invalid configs are only ever reported.
 
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
@@ -10,6 +12,8 @@ declare -a _DOCTOR_CATEGORIES=()
 declare -a _DOCTOR_STATUSES=()
 declare -a _DOCTOR_MESSAGES=()
 declare -a _DOCTOR_DETAILS=()
+declare -a _DOCTOR_FIXES=()        # repair action per check ("" = none)
+declare -a _DOCTOR_FIX_IDS=() _DOCTOR_FIX_RESULTS=()
 
 _doctor_json_escape() {
     local value="${1-}"
@@ -39,8 +43,9 @@ _doctor_details() {
 }
 
 _doctor_add() {
-    local id="$1" category="$2" status="$3" message="$4" details="${5-}"
+    local id="$1" category="$2" status="$3" message="$4" details="${5-}" fix="${6-}"
     [[ -n "$details" ]] || details='{}'
+    _DOCTOR_FIXES+=("$fix")
     _DOCTOR_IDS+=("$id")
     _DOCTOR_CATEGORIES+=("$category")
     _DOCTOR_STATUSES+=("$status")
@@ -54,6 +59,7 @@ _doctor_reset() {
     _DOCTOR_STATUSES=()
     _DOCTOR_MESSAGES=()
     _DOCTOR_DETAILS=()
+    _DOCTOR_FIXES=()
 }
 
 _doctor_os_value() {
@@ -109,9 +115,11 @@ _doctor_check_commands() {
                 "$(t doctor.msg.command_ok "$cmd")" \
                 "$(_doctor_details command "$cmd" path "$(command -v "$cmd")")"
         else
+            local fix=""
+            [[ "$cmd" == curl || "$cmd" == jq || "$cmd" == openssl ]] && fix="_doctor_fix_pkg $cmd"
             _doctor_add "command.${cmd}" "dependency" "critical" \
                 "$(t doctor.msg.command_bad "$cmd")" \
-                "$(_doctor_details command "$cmd" path "")"
+                "$(_doctor_details command "$cmd" path "")" "$fix"
         fi
     done
 }
@@ -254,13 +262,43 @@ _doctor_check_core() {
     [[ -n "$active_state" ]] || active_state="inactive"
     if [[ "$load_state" == "not-found" ]]; then
         _doctor_add "core.${id}" "core" "critical" "$(t doctor.msg.service_missing "$label" "$service")" \
-            "$(_doctor_details name "$label" binary "$binary" service "$service" config "$config" state "$active_state")"
+            "$(_doctor_details name "$label" binary "$binary" service "$service" config "$config" state "$active_state")" \
+            "_doctor_fix_core $id"
     elif [[ "$active_state" == "active" ]]; then
         _doctor_add "core.${id}" "core" "ok" "$(t doctor.msg.service_ok "$label")" \
             "$(_doctor_details name "$label" binary "$binary" service "$service" config "$config" state "$active_state")"
     else
         _doctor_add "core.${id}" "core" "critical" "$(t doctor.msg.service_bad "$label" "$active_state")" \
-            "$(_doctor_details name "$label" binary "$binary" service "$service" config "$config" state "$active_state")"
+            "$(_doctor_details name "$label" binary "$binary" service "$service" config "$config" state "$active_state")" \
+            "_doctor_fix_core $id"
+    fi
+    [[ "$load_state" == "loaded" ]] && _doctor_check_core_extra "$id" "$label" "$service"
+}
+
+# Starts at boot; and, for the three proxy cores, runs as psm-core (lib/coreperm.sh).
+_doctor_check_core_extra() {
+    local id="$1" label="$2" service="$3" def pid user=""
+    if svc_is_enabled "$service" 2>/dev/null; then
+        _doctor_add "core.${id}.boot" "core" "ok" "$(t doctor.msg.boot_ok "$label")" \
+            "$(_doctor_details service "$service" enabled "true")"
+    else
+        _doctor_add "core.${id}.boot" "core" "warning" "$(t doctor.msg.boot_disabled "$label")" \
+            "$(_doctor_details service "$service" enabled "false")" "_doctor_fix_boot $service"
+    fi
+    case "$id" in xray|singbox|mihomo) ;; *) return 0 ;; esac
+    if _uses_systemd; then
+        def="/etc/systemd/system/${service}.service"
+        pid=$(systemctl show -p MainPID --value "$service" 2>/dev/null || true)
+        [[ "$pid" =~ ^[1-9][0-9]*$ ]] && user=$(stat -c %U "/proc/$pid" 2>/dev/null)
+    else
+        def="/etc/init.d/${service}"
+    fi
+    if grep -qE '^(User=|command_user="?)psm-core' "$def" 2>/dev/null && [[ "$user" != root ]]; then
+        _doctor_add "core.${id}.user" "core" "ok" "$(t doctor.msg.core_user_ok "$label")" \
+            "$(_doctor_details service "$service" definition "$def" user "${user:-psm-core}")"
+    else
+        _doctor_add "core.${id}.user" "core" "warning" "$(t doctor.msg.core_root "$label")" \
+            "$(_doctor_details service "$service" definition "$def" user "${user:-root}")" "_doctor_fix_core $id"
     fi
 }
 
@@ -282,10 +320,10 @@ _doctor_check_disk() {
             "$(_doctor_details mount "/" total_kb "" available_kb "" used_percent "")"
     elif (( used_pct >= 95 )); then
         _doctor_add "resource.disk_root" "resource" "critical" "$(t doctor.msg.disk_critical "$used_pct")" \
-            "$(_doctor_details mount "/" total_kb "$total" available_kb "$available" used_percent "$used_pct")"
+            "$(_doctor_details mount "/" total_kb "$total" available_kb "$available" used_percent "$used_pct")" "_doctor_fix_disk"
     elif (( used_pct >= 90 )); then
         _doctor_add "resource.disk_root" "resource" "warning" "$(t doctor.msg.disk_warning "$used_pct")" \
-            "$(_doctor_details mount "/" total_kb "$total" available_kb "$available" used_percent "$used_pct")"
+            "$(_doctor_details mount "/" total_kb "$total" available_kb "$available" used_percent "$used_pct")" "_doctor_fix_disk"
     else
         _doctor_add "resource.disk_root" "resource" "ok" "$(t doctor.msg.disk_ok "$used_pct")" \
             "$(_doctor_details mount "/" total_kb "$total" available_kb "$available" used_percent "$used_pct")"
@@ -311,17 +349,133 @@ _doctor_check_certificates() {
         fi
     done < <(find "$NGINX_SSL_DIR" -type f \( -name '*.crt' -o -name '*.cer' -o -name '*fullchain*.pem' \) -print 2>/dev/null)
 
-    local details
+    local details fix=""
     details=$(_doctor_details directory "$NGINX_SSL_DIR" total "$total" expiring "$expiring" expired "$expired" invalid "$invalid")
+    [[ -f "$ACME_HOME/acme.sh" ]] && fix="_doctor_fix_cert"
     if (( total == 0 )); then
         _doctor_add "certificate.nginx" "certificate" "skipped" "$(t doctor.msg.cert_absent)" "$details"
     elif (( expired > 0 || invalid > 0 )); then
-        _doctor_add "certificate.nginx" "certificate" "critical" "$(t doctor.msg.cert_critical "$expired" "$invalid")" "$details"
+        _doctor_add "certificate.nginx" "certificate" "critical" "$(t doctor.msg.cert_critical "$expired" "$invalid")" "$details" "$fix"
     elif (( expiring > 0 )); then
-        _doctor_add "certificate.nginx" "certificate" "warning" "$(t doctor.msg.cert_warning "$expiring")" "$details"
+        _doctor_add "certificate.nginx" "certificate" "warning" "$(t doctor.msg.cert_warning "$expiring")" "$details" "$fix"
     else
         _doctor_add "certificate.nginx" "certificate" "ok" "$(t doctor.msg.cert_ok "$total")" "$details"
     fi
+}
+
+# Hysteria2 port hopping: every node with a hop range has its REDIRECT rule.
+# Nothing restores them after a reboot but PSM's boot hook, and minimal
+# Debian has no iptables at all.
+_doctor_check_hop() {
+    [[ -f "$LIB_DIR/hop.sh" ]] || return 0
+    source "$LIB_DIR/hop.sh"
+    local wanted tag n=0 have=0 rules
+    # `|| true`: under manager.sh's errexit a failed substitution (no iptables
+    # at all, exit 127) would end doctor right here
+    wanted=$(_hop_wanted || true)
+    rules=$(iptables -t nat -S PREROUTING 2>/dev/null || true)
+    while IFS=$'\t' read -r tag _ _; do
+        [[ -n "$tag" ]] || continue
+        n=$((n + 1))
+        grep -q -- "psm-hop:${tag}\"\?[[:space:]]" <<<"$rules" && have=$((have + 1))
+    done <<<"$wanted"
+    if (( n == 0 )); then
+        _doctor_add "network.hop" "network" "skipped" "$(t doctor.msg.hop_none)" "$(_doctor_details nodes "0" rules "0")"
+    elif (( have == n )); then
+        _doctor_add "network.hop" "network" "ok" "$(t doctor.msg.hop_ok "$n")" "$(_doctor_details nodes "$n" rules "$have")"
+    else
+        _doctor_add "network.hop" "network" "warning" "$(t doctor.msg.hop_missing "$have" "$n")" \
+            "$(_doctor_details nodes "$n" rules "$have")" "_doctor_fix_hop"
+    fi
+}
+
+# ── Repairs (psm doctor --fix) ────────────────────────────────────────────────
+# Each runs in a subshell with stdout on stderr and no terminal input, and
+# returns 0 when it believes the problem is gone; the checks run again after.
+_doctor_fix_pkg() { ensure_pkg_deps "$1" >/dev/null 2>&1; command -v "$1" &>/dev/null; }
+
+# Restart a core through its own config-test-then-restart path; a missing
+# service definition is written first. The proxy cores' restart path also
+# moves a root unit to psm-core (lib/coreperm.sh).
+_doctor_fix_core() {
+    local svc
+    case "$1" in
+        xray)
+            svc=xray; source "$LIB_DIR/xray/core.sh"
+            svc_exists xray || { _write_xray_service; svc_daemon_reload; svc_enable xray; }
+            xray_test_restart ;;
+        singbox)
+            svc=sing-box; source "$LIB_DIR/singbox/core.sh"
+            svc_exists sing-box || { _sb_write_service; svc_daemon_reload; svc_enable sing-box; }
+            sb_test_restart ;;
+        mihomo)
+            svc=mihomo; source "$LIB_DIR/mihomo/core.sh"
+            svc_exists mihomo || { _mh_write_service; svc_daemon_reload; svc_enable mihomo; }
+            mh_test_restart ;;
+        hysteria2) svc=hysteria-server; svc_exists "$svc" && svc_restart "$svc" ;;
+        ssrust)    svc=ss-rust; svc_exists "$svc" && svc_restart "$svc" ;;
+        *) return 1 ;;
+    esac
+    local i
+    for i in 1 2 3 4 5 6; do svc_is_active "$svc" && return 0; sleep 1; done
+    return 1
+}
+
+_doctor_fix_boot() { svc_enable "$1" && svc_is_enabled "$1"; }
+
+_doctor_fix_hop() { source "$LIB_DIR/hop.sh" && psm_hop_sync; }
+
+# acme.sh decides what is due; a 90-day certificate with under 14 days left is.
+_doctor_fix_cert() {
+    source "$LIB_DIR/cert.sh"
+    local rc=0
+    _acme --renew-all || rc=$?
+    (( rc == 0 || rc == 2 ))
+}
+
+# Space PSM can give back without touching data: the journal, oversized logs,
+# the package cache.
+_doctor_fix_disk() {
+    _uses_systemd && command -v journalctl &>/dev/null && journalctl --vacuum-size=100M >/dev/null 2>&1
+    find /var/log/psm /var/log/xray "$LOG_DIR" -maxdepth 1 -type f -name '*.log' -size +50M \
+        -exec truncate -s 0 {} + 2>/dev/null
+    detect_os
+    case "$PKG_MGR" in
+        apt-get) apt-get clean ;;
+        yum)     "$(_rhel_pkg_cmd)" clean all >/dev/null 2>&1 ;;
+        apk)     rm -rf /var/cache/apk/* ;;
+    esac
+    return 0
+}
+
+_doctor_apply_fixes() {
+    local i action done_actions=$'\n'
+    _DOCTOR_FIX_IDS=(); _DOCTOR_FIX_RESULTS=()
+    for (( i=0; i<${#_DOCTOR_IDS[@]}; i++ )); do
+        [[ "${_DOCTOR_STATUSES[$i]}" == warning || "${_DOCTOR_STATUSES[$i]}" == critical ]] || continue
+        action="${_DOCTOR_FIXES[$i]}"
+        [[ -n "$action" ]] || continue
+        # one repair can answer several checks (a core that is stopped and still root)
+        [[ "$done_actions" == *$'\n'"$action"$'\n'* ]] && continue
+        done_actions+="$action"$'\n'
+        log_step "$(t doctor.fix.running "${_DOCTOR_IDS[$i]}")"
+        _DOCTOR_FIX_IDS+=("${_DOCTOR_IDS[$i]}")
+        # shellcheck disable=SC2086  # "function arg" by design
+        if ( $action ) </dev/null >&2; then
+            _DOCTOR_FIX_RESULTS+=("ok")
+        else
+            _DOCTOR_FIX_RESULTS+=("failed")
+        fi
+    done
+}
+
+_doctor_fixable_count() {
+    local i n=0
+    for (( i=0; i<${#_DOCTOR_IDS[@]}; i++ )); do
+        [[ -n "${_DOCTOR_FIXES[$i]}" && ( "${_DOCTOR_STATUSES[$i]}" == warning || "${_DOCTOR_STATUSES[$i]}" == critical ) ]] \
+            && n=$((n + 1))
+    done
+    printf '%s' "$n"
 }
 
 _doctor_collect() {
@@ -332,6 +486,7 @@ _doctor_collect() {
     _doctor_check_cores
     _doctor_check_disk
     _doctor_check_certificates
+    _doctor_check_hop
 }
 
 _doctor_summary() {
@@ -361,14 +516,23 @@ _doctor_render_json() {
     printf '"status":"%s",' "$status"
     printf '"summary":{"ok":%s,"warning":%s,"critical":%s,"skipped":%s,"total":%s},' \
         "$ok" "$warning" "$critical" "$skipped" "$total"
+    if [[ "${1:-}" == fixed ]]; then
+        printf '"fixes":['
+        for (( i=0; i<${#_DOCTOR_FIX_IDS[@]}; i++ )); do
+            (( i == 0 )) || printf ','
+            printf '{"id":"%s","result":"%s"}' "$(_doctor_json_escape "${_DOCTOR_FIX_IDS[$i]}")" "${_DOCTOR_FIX_RESULTS[$i]}"
+        done
+        printf '],'
+    fi
     printf '"checks":['
     for (( i=0; i<${#_DOCTOR_IDS[@]}; i++ )); do
         (( i == 0 )) || printf ','
-        printf '{"id":"%s","category":"%s","status":"%s","message":"%s","details":%s}' \
+        printf '{"id":"%s","category":"%s","status":"%s","message":"%s","fixable":%s,"details":%s}' \
             "$(_doctor_json_escape "${_DOCTOR_IDS[$i]}")" \
             "$(_doctor_json_escape "${_DOCTOR_CATEGORIES[$i]}")" \
             "$(_doctor_json_escape "${_DOCTOR_STATUSES[$i]}")" \
             "$(_doctor_json_escape "${_DOCTOR_MESSAGES[$i]}")" \
+            "$([[ -n "${_DOCTOR_FIXES[$i]}" ]] && echo true || echo false)" \
             "${_DOCTOR_DETAILS[$i]}"
     done
     printf ']}\n'
@@ -379,6 +543,18 @@ _doctor_render_human() {
     summary=$(_doctor_summary)
     IFS=$'\t' read -r status ok warning critical skipped total <<< "$summary"
     echo -e "\n${BOLD}${BLUE}══ $(t doctor.title) ══════════════════════════════${NC}"
+    if [[ "${1:-}" == fixed ]]; then
+        echo -e "  ${BOLD}$(t doctor.fix.title)${NC}"
+        (( ${#_DOCTOR_FIX_IDS[@]} > 0 )) || printf '    %s\n' "$(t doctor.fix.none)"
+        for (( i=0; i<${#_DOCTOR_FIX_IDS[@]}; i++ )); do
+            if [[ "${_DOCTOR_FIX_RESULTS[$i]}" == ok ]]; then
+                printf '    %b%s%b\n' "$GREEN" "$(t doctor.fix.ok "${_DOCTOR_FIX_IDS[$i]}")" "$NC"
+            else
+                printf '    %b%s%b\n' "$RED" "$(t doctor.fix.failed "${_DOCTOR_FIX_IDS[$i]}")" "$NC"
+            fi
+        done
+        echo
+    fi
     for (( i=0; i<${#_DOCTOR_IDS[@]}; i++ )); do
         case "${_DOCTOR_STATUSES[$i]}" in
             ok) color="$GREEN"; label="$(t doctor.status.ok)" ;;
@@ -390,34 +566,43 @@ _doctor_render_human() {
     done
     echo -e "${BLUE}────────────────────────────────────────────────────────────${NC}"
     printf '%s\n' "$(t doctor.summary "$status" "$ok" "$warning" "$critical" "$skipped" "$total")"
+    local fixable; fixable=$(_doctor_fixable_count)
+    [[ "${1:-}" != fixed ]] && (( fixable > 0 )) && printf '%s\n' "$(t doctor.fix.hint "$fixable")"
+    return 0
 }
 
 psm_doctor() {
-    local format="human"
-    if (( $# > 1 )); then
-        printf '%s\n' "$(t doctor.bad_option "$2")" >&2
-        printf '%s\n' "$(t doctor.usage)" >&2
+    local format="human" fix="" arg
+    for arg in "$@"; do
+        case "$arg" in
+            --human) format="human" ;;
+            --json) format="json" ;;
+            --fix) fix="fixed" ;;
+            -h|--help)
+                printf '%s\n' "$(t doctor.usage)"
+                return 0
+                ;;
+            *)
+                printf '%s\n' "$(t doctor.bad_option "$arg")" >&2
+                printf '%s\n' "$(t doctor.usage)" >&2
+                return 2
+                ;;
+        esac
+    done
+    if [[ -n "$fix" ]] && (( EUID != 0 )); then
+        printf '%s\n' "$(t doctor.fix.need_root)" >&2
         return 2
     fi
-    case "${1:-}" in
-        ""|--human) format="human" ;;
-        --json) format="json" ;;
-        -h|--help)
-            printf '%s\n' "$(t doctor.usage)"
-            return 0
-            ;;
-        *)
-            printf '%s\n' "$(t doctor.bad_option "$1")" >&2
-            printf '%s\n' "$(t doctor.usage)" >&2
-            return 2
-            ;;
-    esac
 
     _doctor_collect
+    if [[ -n "$fix" ]]; then
+        _doctor_apply_fixes
+        _doctor_collect
+    fi
     if [[ "$format" == "json" ]]; then
-        _doctor_render_json
+        _doctor_render_json "$fix"
     else
-        _doctor_render_human
+        _doctor_render_human "$fix"
     fi
 
     local summary status

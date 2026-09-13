@@ -127,6 +127,17 @@ for tag in "${ADDED[@]}"; do
 done
 kill $CPID 2>/dev/null
 
+sec "cores run unprivileged (psm-core)"
+for c in xray sing-box mihomo; do
+    # by owner, not the first match: the suite's own mihomo clients run as root
+    u=$(for p in $(pgrep -x "$c"); do stat -c %U "/proc/$p" 2>/dev/null; done | sort -u | tr '\n' ' ')
+    [[ " $u" == *" psm-core "* ]] && ok "$c runs as psm-core" || bad "$c: processes owned by '${u:-nobody}'"
+done
+# acme.sh renewals rewrite keys as root 0600: a restart must still work
+chown root:root /etc/psm/certs/t.key; chmod 600 /etc/psm/certs/t.key
+chk "sing-box restart with a root-only key" bash -c "source lib/common.sh; svc_restart sing-box && sleep 2 && svc_is_active sing-box"
+chk "the key is group-readable again (psm-core)" bash -c "[[ \$(stat -c '%G %a' /etc/psm/certs/t.key) == 'psm-core 640' ]]"
+
 sec "ECH: PSM's sing-box client export and mihomo ech-opts"
 add sing-box vless e-sve --port 32040 "${C[@]}" --transport tcp --ech true
 ech=$(psm node export sing-box vless e-sve --format ech 2>/dev/null)
@@ -195,6 +206,32 @@ hop_client /root/hop2 17892 "${hl/:32020,42000-42100?/:42000-42100?}"
 chk "delete e-shop" bash manager.sh node delete sing-box hysteria2 e-shop --yes
 chk "its REDIRECT rule is gone" bash -c "! iptables -t nat -S PREROUTING | grep -q 'psm-hop:e-shop'"
 chk "boot hook removed with the last hop node" bash -c "! test -f /etc/systemd/system/psm-hop.service && ! test -f /etc/local.d/psm-hop.start"
+
+sec "psm doctor --fix"
+add sing-box hysteria2 e-hop2 --port 32021 "${C[@]}" --hop-ports 43000-43100
+bash -c 'source lib/common.sh; source lib/hop.sh; _hop_flush'          # rules lost (a reboot without the hook)
+# an install from before the cores ran unprivileged: sing-box's unit runs it as root
+if [[ -d /run/systemd/system ]]; then
+    sed -i 's/^User=psm-core/User=root/; s/^Group=psm-core/Group=root/' /etc/systemd/system/sing-box.service
+    systemctl daemon-reload
+else
+    sed -i 's/^command_user=.*/command_user="root"/; /^capabilities=/d' /etc/init.d/sing-box
+fi
+bash -c 'source lib/common.sh; svc_restart sing-box; sleep 2; svc_stop sing-box; svc_disable mihomo' >/dev/null 2>&1
+bash manager.sh doctor --json > /root/doc1.json 2>/dev/null
+chk "doctor: sing-box down, fixable"   jq -e '.checks[] | select(.id=="core.singbox") | .status=="critical" and .fixable' /root/doc1.json
+chk "doctor: sing-box unit runs as root" jq -e '.checks[] | select(.id=="core.singbox.user") | .status=="warning"' /root/doc1.json
+chk "doctor: mihomo not started at boot" jq -e '.checks[] | select(.id=="core.mihomo.boot") | .status=="warning"' /root/doc1.json
+chk "doctor: hop rules missing"          jq -e '.checks[] | select(.id=="network.hop") | .status=="warning"' /root/doc1.json
+chk "human report points at --fix"       bash -c "bash manager.sh doctor 2>/dev/null | grep -q 'doctor --fix'"
+bash manager.sh doctor --fix --json > /root/doc2.json 2>/root/doc2.err
+chk "the three repairs succeeded" jq -e '[.fixes[] | select(.id | IN("core.singbox","core.mihomo.boot","network.hop")) | .result] | length == 3 and all(. == "ok")' /root/doc2.json
+chk "re-check: core, user, boot, hop all ok" jq -e '[.checks[] | select(.id | IN("core.singbox","core.singbox.user","core.mihomo.boot","network.hop")) | .status] | length == 4 and all(. == "ok")' /root/doc2.json
+u=$(for p in $(pgrep -x sing-box); do stat -c %U "/proc/$p" 2>/dev/null; done | sort -u | tr '\n' ' ')
+[[ " $u" == *" psm-core "* ]] && ok "sing-box moved to psm-core by the repair" || bad "sing-box processes owned by '${u:-nobody}'"
+chk "hop rule restored" bash -c "iptables -t nat -S PREROUTING | grep -q 'psm-hop:e-hop2'"
+[[ -s /root/doc2.err ]] && sed 's/^/       /' /root/doc2.err | tail -8
+chk "delete e-hop2" bash manager.sh node delete sing-box hysteria2 e-hop2 --yes
 
 echo; echo "=== RESULT: $PASS ok, $FAIL failed"
 for f in "${FAILS[@]}"; do echo "  - $f"; done

@@ -65,7 +65,10 @@ rs_sb_write() {
     parsed=$(rs_parsed_json "$name") || return 1
     mkdir -p "$RS_SB_DIR"
     _rs_sb_source_json "$parsed" > "$(rs_sb_path "$name")" || return 1
-    chmod 600 "$(rs_sb_path "$name")" 2>/dev/null || true
+    # sing-box (psm-core) re-reads rule-set files on its own, without a restart
+    # that would fix permissions first (lib/coreperm.sh)
+    chmod 640 "$(rs_sb_path "$name")" 2>/dev/null || true
+    chgrp psm-core "$(rs_sb_path "$name")" 2>/dev/null || true
 }
 
 rs_sb_bind() {

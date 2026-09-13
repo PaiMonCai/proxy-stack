@@ -198,6 +198,11 @@ _systemctl_disable_now psm-health-report.timer
 _systemctl_disable_now psm-traffic.timer
 _systemctl_disable_now psm-traffic-shutdown.service
 _systemctl_disable_now psm-tgbot.service
+# The unprivileged core user (lib/coreperm.sh); only once no core uses it any more
+if id -u psm-core &>/dev/null && ! pgrep -u psm-core >/dev/null 2>&1; then
+    userdel psm-core 2>/dev/null || deluser psm-core 2>/dev/null || true
+    groupdel psm-core 2>/dev/null || delgroup psm-core 2>/dev/null || true
+fi
 _remove_systemd_units \
     psm-reality-watchdog.service psm-reality-watchdog.timer \
     psm-vpngate.service psm-vpngate-watchdog.service psm-vpngate-watchdog.timer \

@@ -3,6 +3,12 @@
 
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
+# Private keys: 0640 group psm-core, so Xray / sing-box / mihomo, which run as
+# psm-core (lib/coreperm.sh), can read them; 0600 root when that user is absent.
+_cert_key_perms() {
+    if id -u psm-core &>/dev/null && chgrp psm-core "$1" 2>/dev/null; then chmod 640 "$1"; else chmod 600 "$1"; fi
+}
+
 ACME_INSTALL_URL="https://get.acme.sh"
 SSL_DIR="$NGINX_SSL_DIR"    # /etc/nginx/ssl
 
@@ -281,7 +287,7 @@ cert_import_manual() {
     cp "$cert_file" "$dest/fullchain.pem"
     cp "$key_file"  "$dest/privkey.pem"
     [[ -n "$ca_file" && -f "$ca_file" ]] && cp "$ca_file" "$dest/chain.pem"
-    chmod 600 "$dest/privkey.pem"
+    _cert_key_perms "$dest/privkey.pem"
     log_ok "$(t cert.import.imported_to "$dest")"
 }
 
@@ -296,6 +302,8 @@ cert_install_domain() {
     # reload handler, so restart it there — but only when it is running.
     local reload_cmd="systemctl reload nginx 2>/dev/null; systemctl reload hysteria-server 2>/dev/null || true"
     _uses_systemd || reload_cmd="rc-service nginx reload 2>/dev/null; rc-service hysteria-server status >/dev/null 2>&1 && rc-service hysteria-server restart >/dev/null 2>&1 || true"
+    # a renewal rewrites the key: keep it readable by the cores (psm-core)
+    reload_cmd="id -u psm-core >/dev/null 2>&1 && chgrp psm-core $dest/privkey.pem && chmod 640 $dest/privkey.pem; $reload_cmd"
 
     _acme --install-cert -d "$domain" \
         --cert-file      "$dest/cert.pem" \
@@ -303,7 +311,7 @@ cert_install_domain() {
         --fullchain-file "$dest/fullchain.pem" \
         --reloadcmd      "$reload_cmd"
 
-    chmod 600 "$dest/privkey.pem"
+    _cert_key_perms "$dest/privkey.pem"
     log_ok "$(t cert.install.installed "$dest")"
 }
 
@@ -444,7 +452,7 @@ cert_ensure_domain() {
             mkdir -p "$cert_dir"
             cp "$cert_file" "$cert_dir/fullchain.pem"
             cp "$key_file"  "$cert_dir/privkey.pem"
-            chmod 600 "$cert_dir/privkey.pem"
+            _cert_key_perms "$cert_dir/privkey.pem"
             log_ok "$(t cert.install.installed_to "$cert_dir")"
             ;;
         0)

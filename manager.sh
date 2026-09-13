@@ -28,7 +28,7 @@ case "${1:-}" in
         cat <<'EOF'
 Usage:
   psm                         Open the interactive manager
-  psm doctor [--json]         Run read-only system and configuration checks
+  psm doctor [--json] [--fix] Run system and configuration checks; --fix repairs what it safely can
   psm node <command> [...]    Manage nodes non-interactively
 
 Node commands:

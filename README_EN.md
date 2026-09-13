@@ -189,6 +189,7 @@ These are the real entry points invoked by each module's scheduled tasks. The "e
 ```bash
 psm doctor                         # Read-only host and configuration diagnostics
 psm doctor --json                  # Structured JSON report
+psm doctor --fix                   # Repair what it finds (restart a stopped core, re-enable boot start, rebuild hop rules, renew certificates, …), then check again
 
 psm node list --json               # List nodes from all three cores
 psm node show xray reality node-1 --json
