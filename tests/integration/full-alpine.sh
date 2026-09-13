@@ -91,6 +91,11 @@ chmod 755 /etc/init.d/psmflap; rc-service psmflap start >/dev/null 2>&1; sleep 4
 chk "crash loop reported inactive" bash -c "source lib/common.sh; ! svc_is_active psmflap"
 rc-service psmflap stop >/dev/null 2>&1; rm -f /etc/init.d/psmflap
 
+sec "main menu logo"
+menu_at() { printf '0\n' | TERM=xterm-256color script -qfc "stty cols $1 rows 40; bash manager.sh" /dev/null 2>&1; }
+chk "logo beside the title (100 columns)" bash -c "$(declare -f menu_at); menu_at 100 | grep -q '┏━━━━┛'"
+chk "no logo on a narrow terminal (50 columns)" bash -c "$(declare -f menu_at); out=\$(menu_at 50); grep -q 'Proxy Stack Manager' <<<\"\$out\" && ! grep -q '┏━━━━┛' <<<\"\$out\""
+
 sec "doctor / test suite"
 chk "doctor --json" bash -c "bash manager.sh doctor --json | jq -e '.checks | length > 0'"
 bash manager.sh doctor --json 2>/dev/null | jq -r '.checks[] | select(.category=="core") | "       \(.id) \(.status)"'

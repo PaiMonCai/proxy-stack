@@ -160,6 +160,11 @@ chk "a restart through PSM leaves it root" bash -c "PSM_SYSTEMD_VERSION=219 bash
 chk "doctor says why (skipped, not fixable)" bash -c "PSM_SYSTEMD_VERSION=219 bash manager.sh doctor --json | jq -e '.checks[] | select(.id == \"core.singbox.user\") | .status == \"skipped\" and (.fixable | not)'"
 chk "current systemd: back to psm-core" bash -c "bash -c 'source lib/singbox/core.sh; sb_test_restart' >/dev/null 2>&1; grep -q '^User=psm-core' $U && systemctl is-active --quiet sing-box"
 
+sec "main menu logo"
+menu_at() { printf '0\n' | TERM=xterm-256color script -qfc "stty cols $1 rows 40; bash manager.sh" /dev/null 2>&1; }
+chk "logo beside the title (100 columns)" bash -c "$(declare -f menu_at); menu_at 100 | grep -q '┏━━━━┛'"
+chk "no logo on a narrow terminal (50 columns)" bash -c "$(declare -f menu_at); out=\$(menu_at 50); grep -q 'Proxy Stack Manager' <<<\"\$out\" && ! grep -q '┏━━━━┛' <<<\"\$out\""
+
 sec "test suites"
 chk "tests/run.sh"       bash tests/run.sh
 chk "core-validate"      env XRAY_BINS="/root/cores/stable/xray /root/cores/pre/xray" SINGBOX_BIN=/root/cores/sing-box MIHOMO_BIN=/root/cores/mihomo bash tests/core-validate.sh

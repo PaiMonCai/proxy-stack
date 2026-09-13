@@ -205,12 +205,37 @@ _banner() {
     local L4='| |_| | | |_| |       |  __/   ___) | | |  | |'
     local L5=' \___/   \__\_|       |_|     |____/ |_|  |_|'
 
+    # The PSM logo (the documentation site's "P" with a dot), five rows beside
+    # the title, in the logo's own green and blue. Each row is 11 columns wide.
+    # Left out when the terminal is too narrow for both.
+    # Width: stty first (a minimal Alpine has no tput), then tput, then
+    # $COLUMNS. Every step may fail without ending the menu (set -e, pipefail).
+    local LG=() LGC LDC cols colors
+    cols=$(stty size 2>/dev/null </dev/tty | awk '{print $2}' || true)
+    [[ "$cols" =~ ^[0-9]+$ ]] || cols=$(tput cols 2>/dev/null || true)
+    [[ "$cols" =~ ^[0-9]+$ ]] || cols=${COLUMNS:-80}
+    [[ "$cols" =~ ^[0-9]+$ ]] || cols=80
+    if (( cols >= 66 )); then
+        colors=$(tput colors 2>/dev/null || true)
+        if [[ "${COLORTERM:-}" == *truecolor* || "${COLORTERM:-}" == *24bit* || "${TERM:-}" == *256color* ]] \
+            || { [[ "$colors" =~ ^[0-9]+$ ]] && (( colors >= 256 )); }; then
+            LGC='\033[38;5;42m'; LDC='\033[38;5;39m'
+        else
+            LGC='\033[32m'; LDC='\033[34m'
+        fi
+        LG=("${BOLD}${LGC}━━━━━━━━┓${NC}  "
+            "${BOLD}${LGC}        ┃${NC}  "
+            "${BOLD}${LGC}   ┏━━━━┛${NC}  "
+            "${BOLD}${LGC}   ┃${NC}       "
+            "${BOLD}${LGC}   ┃${NC}    ${LDC}●${NC}  ")
+    fi
+
     echo ""
-    printf "  ${BOLD}${BC}%s${NC}\n"  "$L1"
-    printf "  ${BOLD}${BC}%s${NC}\n"  "$L2"
-    printf "  ${BOLD}${BB}%s${NC}\n"  "$L3"
-    printf "  ${BOLD}${BB}%s${NC}\n"  "$L4"
-    printf "  ${BOLD}${BC}%s${NC}\n"  "$L5"
+    printf "  %b${BOLD}${BC}%s${NC}\n"  "${LG[0]:-}" "$L1"
+    printf "  %b${BOLD}${BC}%s${NC}\n"  "${LG[1]:-}" "$L2"
+    printf "  %b${BOLD}${BB}%s${NC}\n"  "${LG[2]:-}" "$L3"
+    printf "  %b${BOLD}${BB}%s${NC}\n"  "${LG[3]:-}" "$L4"
+    printf "  %b${BOLD}${BC}%s${NC}\n"  "${LG[4]:-}" "$L5"
     printf "\n"
     printf "  ${BOLD}${WH}Proxy Stack Manager${NC}  ${DM}·····${NC}  ${YELLOW}◆ https://jinqians.com${NC}\n"
     printf "  ${BLUE}──────────────────────────────────────────────${NC}\n"
