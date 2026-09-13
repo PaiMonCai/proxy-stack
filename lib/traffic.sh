@@ -903,7 +903,7 @@ _trf_add_wizard() {
     local pair store_dir core_label proto proto_label store_file tag dport cport laddr ifc
     for pair in "singbox:sing-box" "mihomo:mihomo"; do
         store_dir="$CFG_DIR/${pair%%:*}"; core_label="${pair#*:}"
-        for proto in reality ss2022 hysteria2 anytls snell trojan vmess socks vless; do
+        for proto in reality ss2022 hysteria2 anytls snell trojan vmess socks vless tuic wireguard; do
             store_file="$store_dir/$proto.json"
             [[ -f "$store_file" ]] || continue
             case "$proto" in
@@ -916,6 +916,8 @@ _trf_add_wizard() {
                 vmess)     proto_label="VMess" ;;
                 socks)     proto_label="SOCKS5" ;;
                 vless)     proto_label="VLESS" ;;
+                tuic)      proto_label="TUIC" ;;
+                wireguard) proto_label="WireGuard" ;;
             esac
             while IFS=$'\t' read -r tag dport cport laddr; do
                 [[ -n "$tag" && -n "$dport" ]] || continue

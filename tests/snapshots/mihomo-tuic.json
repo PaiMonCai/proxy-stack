@@ -1,0 +1,15 @@
+{
+  "alpn": [
+    "h3"
+  ],
+  "certificate": "/etc/psm/certs/mh-tuic-t1.crt",
+  "congestion-controller": "cubic",
+  "listen": "0.0.0.0",
+  "name": "mh-tuic-t1",
+  "port": 8443,
+  "private-key": "/etc/psm/certs/mh-tuic-t1.key",
+  "type": "tuic",
+  "users": {
+    "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d": "tuic-test-pass"
+  }
+}

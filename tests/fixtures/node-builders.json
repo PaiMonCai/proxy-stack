@@ -681,5 +681,77 @@
     "obfs_host": "",
     "stls_sni": "www.microsoft.com",
     "stls_password": "stls-test-pass"
+  },
+  "singbox_tuic": {
+    "tag": "sb-tuic-t1",
+    "port": 8443,
+    "uuid": "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+    "password": "tuic-test-pass",
+    "domain": "",
+    "sni": "www.bing.com",
+    "cert_path": "/etc/psm/certs/sb-tuic-t1.crt",
+    "key_path": "/etc/psm/certs/sb-tuic-t1.key",
+    "insecure": 1,
+    "congestion_control": "bbr"
+  },
+  "mihomo_tuic": {
+    "tag": "mh-tuic-t1",
+    "port": 8443,
+    "uuid": "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+    "password": "tuic-test-pass",
+    "domain": "",
+    "sni": "www.bing.com",
+    "cert_path": "/etc/psm/certs/mh-tuic-t1.crt",
+    "key_path": "/etc/psm/certs/mh-tuic-t1.key",
+    "insecure": 1,
+    "congestion_control": "cubic"
+  },
+  "singbox_wireguard": {
+    "tag": "sb-wg-t1",
+    "port": 51820,
+    "subnet": "10.66.1",
+    "mtu": 1408,
+    "private_key": "mJNRPhcO4yIKNynz86By/fFe/dwvW7PnDLNrTCOtA30=",
+    "public_key": "/SUYNFwCIzJAvZcXiefyY7rxIhZmtGDTLUFv3gazQ10=",
+    "peers": [
+      {
+        "name": "peer1",
+        "host": 2,
+        "private_key": "SDpy7ll8fpbeOYQeKBwJvPSAholxGGzcCa7tWibpS0E=",
+        "public_key": "aHNy7ehIePwBZi9/cd2e0X2gUqLg0ZVf6LK1CoPExUI="
+      }
+    ]
+  },
+  "singbox_hy2_ech": {
+    "tag": "sb-hy2-ech",
+    "port": 8443,
+    "password": "hy2-test-pass",
+    "domain": "",
+    "sni": "www.bing.com",
+    "cert_path": "/etc/psm/certs/sb-hy2-t1.crt",
+    "key_path": "/etc/psm/certs/sb-hy2-t1.key",
+    "insecure": 1,
+    "up": 0,
+    "down": 0,
+    "masquerade": "https://www.bing.com",
+    "obfs_pass": "obfs-test-pass",
+    "ech_key": "-----BEGIN ECH KEYS-----\nACBUuwO5hJ6WZSJSe7FmUTP+2hcPI+DCigtiux6YY6jVeQBH/g0AQwAAIAAgOByq\nmT7HyiGvEhJaQcuM1TE1MUUspqc8/jsi5EfqMBsADAABAAEAAQACAAEAAwAMd3d3\nLmJpbmcuY29tAAA=\n-----END ECH KEYS-----",
+    "ech_config": "AEf+DQBDAAAgACA4HKqZPsfKIa8SElpBy4zVMTUxRSympzz+OyLkR+owGwAMAAEAAQABAAIAAQADAAx3d3cuYmluZy5jb20AAA=="
+  },
+  "mihomo_hy2_ech": {
+    "tag": "mh-hy2-ech",
+    "port": 8443,
+    "password": "hy2-test-pass",
+    "domain": "",
+    "sni": "www.bing.com",
+    "cert_path": "/etc/psm/certs/mh-hy2-t1.crt",
+    "key_path": "/etc/psm/certs/mh-hy2-t1.key",
+    "insecure": 1,
+    "up": 0,
+    "down": 0,
+    "masquerade": "https://www.bing.com",
+    "obfs_pass": "obfs-test-pass",
+    "ech_key": "-----BEGIN ECH KEYS-----\nACBUuwO5hJ6WZSJSe7FmUTP+2hcPI+DCigtiux6YY6jVeQBH/g0AQwAAIAAgOByq\nmT7HyiGvEhJaQcuM1TE1MUUspqc8/jsi5EfqMBsADAABAAEAAQACAAEAAwAMd3d3\nLmJpbmcuY29tAAA=\n-----END ECH KEYS-----",
+    "ech_config": "AEf+DQBDAAAgACA4HKqZPsfKIa8SElpBy4zVMTUxRSympzz+OyLkR+owGwAMAAEAAQABAAIAAQADAAx3d3cuYmluZy5jb20AAA=="
   }
 }

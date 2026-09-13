@@ -47,7 +47,9 @@ _mh_anytls_select_node() {
 }
 
 # ── Build mihomo anytls listener ─────────────────────────────────────────────
-_mh_anytls_build_listener() {
+# ECH is merged in when the node has keys (lib/common.sh: _mh_ech_merge)
+_mh_anytls_build_listener() { _mh_anytls_build_listener_base "$1" | _mh_ech_merge "$1"; }
+_mh_anytls_build_listener_base() {
     local node_json="$1"
     local tag;  tag=$(echo "$node_json"  | jq -r '.tag')
     local port; port=$(echo "$node_json" | jq -r '.port')

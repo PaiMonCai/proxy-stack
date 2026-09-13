@@ -65,7 +65,9 @@ _sb_vless_is_udp() { [[ "$1" == "quic" ]]; }
 # users 是 {name, uuid[, flow]}；flow 只有 tcp 传输下才写（Vision 是 TCP 上的流控，
 # 套在 ws/grpc/h2 里没有意义，客户端也对不上）。
 # grpc 用 service_name 而不是 path —— 写成 path 会被 sing-box 拒绝。
-_sb_vless_build_inbound() {
+# ECH is merged in when the node has keys (lib/common.sh: _sb_ech_merge)
+_sb_vless_build_inbound() { _sb_vless_build_inbound_base "$1" | _sb_ech_merge "$1"; }
+_sb_vless_build_inbound_base() {
     local node_json="$1"
     local tag;  tag=$(echo "$node_json"  | jq -r '.tag')
     local port; port=$(echo "$node_json" | jq -r '.port')

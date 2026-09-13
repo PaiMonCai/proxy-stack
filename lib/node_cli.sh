@@ -36,8 +36,8 @@ Usage:
 Cores: xray, sing-box (alias: singbox), mihomo
 Protocols:
   xray:     reality, vision, xhttp, ss2022, trojan, vmess, socks, hysteria2 (Xray v26.3.27+)
-  sing-box: reality, ss2022, hysteria2, anytls, snell, trojan, vmess, socks, vless
-  mihomo:   reality, ss2022, hysteria2, anytls, snell, trojan, vmess, socks, vless
+  sing-box: reality, ss2022, hysteria2, anytls, snell, trojan, vmess, socks, vless, tuic, wireguard
+  mihomo:   reality, ss2022, hysteria2, anytls, snell, trojan, vmess, socks, vless, tuic
 
 Protocol inputs:
   reality:   --port; UUID/keys/short ID/SNI/dest receive safe defaults
@@ -60,8 +60,12 @@ Protocol inputs:
   ss2022:    --port [--method ...] [--password ...]
   hysteria2: --port --sni --cert-path --key-path [--password ...]
              [--obfs-pass ... [--obfs-type salamander|gecko]]
+             [--hop-ports START-END]  port hopping: a UDP range redirected to --port
              gecko needs sing-box 1.14+ / mihomo 1.19.26+ / Xray v26.3.27+
   anytls:    --port --sni --cert-path --key-path [--password ...]
+  tuic:      --port --sni --cert-path --key-path [--uuid ...] [--password ...]
+             [--congestion-control bbr|cubic|new_reno]   (TUIC v5, UDP)
+  wireguard: --port [--peer-count N]   (sing-box; export prints a wg-quick file per client)
   snell:     --port [--version 5|6 for sing-box; 4|5 for mihomo] [--psk ...]
 
 Common field options are accepted directly, for example --uuid, --password,
@@ -95,10 +99,10 @@ _node_cli_pairs() {
         $'xray\tvmess' $'xray\tsocks' $'xray\thysteria2' \
         $'sing-box\treality' $'sing-box\tss2022' $'sing-box\thysteria2' \
         $'sing-box\tanytls' $'sing-box\tsnell' $'sing-box\ttrojan' $'sing-box\tvmess' \
-        $'sing-box\tsocks' $'sing-box\tvless' \
+        $'sing-box\tsocks' $'sing-box\tvless' $'sing-box\ttuic' $'sing-box\twireguard' \
         $'mihomo\treality' $'mihomo\tss2022' $'mihomo\thysteria2' \
         $'mihomo\tanytls' $'mihomo\tsnell' $'mihomo\ttrojan' $'mihomo\tvmess' \
-        $'mihomo\tsocks' $'mihomo\tvless'
+        $'mihomo\tsocks' $'mihomo\tvless' $'mihomo\ttuic'
 }
 
 _node_cli_norm_core() {
@@ -112,7 +116,8 @@ _node_cli_norm_core() {
 
 _node_cli_norm_protocol() {
     case "${1:-}" in
-        reality|vision|xhttp|anytls|snell|trojan|vmess|socks|vless) printf '%s' "$1" ;;
+        reality|vision|xhttp|anytls|snell|trojan|vmess|socks|vless|tuic|wireguard) printf '%s' "$1" ;;
+        wg) printf 'wireguard' ;;
         socks5) printf 'socks' ;;
         ss|ss2022|shadowsocks|shadowsocks2022) printf 'ss2022' ;;
         hy2|hysteria2) printf 'hysteria2' ;;
@@ -166,6 +171,8 @@ _node_cli_apply_fn() {
         sing-box/vmess) printf '_sb_vmess_apply' ;;
         sing-box/socks) printf '_sb_socks_apply' ;;
         sing-box/vless) printf '_sb_vless_apply' ;;
+        sing-box/tuic) printf '_sb_tuic_apply' ;;
+        sing-box/wireguard) printf '_sb_wg_apply' ;;
         mihomo/reality) printf '_mh_reality_apply_all' ;;
         mihomo/ss2022) printf '_mh_ss_apply' ;;
         mihomo/hysteria2) printf '_mh_hy2_apply' ;;
@@ -175,6 +182,7 @@ _node_cli_apply_fn() {
         mihomo/vmess) printf '_mh_vmess_apply' ;;
         mihomo/socks) printf '_mh_socks_apply' ;;
         mihomo/vless) printf '_mh_vless_apply' ;;
+        mihomo/tuic) printf '_mh_tuic_apply' ;;
         *) return 1 ;;
     esac
 }
@@ -276,7 +284,7 @@ _node_cli_collect() {
 _node_cli_redact() {
     jq -c '
       def secret_key:
-        test("^(password|private_key|psk|uuid|short_id|short_ids|obfs_pass|token|secret)$"; "i");
+        test("^(password|private_key|psk|uuid|short_id|short_ids|obfs_pass|token|secret|ech_key)$"; "i");
       def redact:
         if type == "object" then
           with_entries(if (.key | secret_key) then .value = "***" else .value |= redact end)
@@ -321,13 +329,16 @@ _node_cli_field_name() {
         obfs-type) printf 'obfs_type' ;; vless-enc) printf 'vless_enc' ;;
         shadow-tls-sni) printf 'stls_sni' ;; shadow-tls-password) printf 'stls_password' ;;
         reality-transport) printf 'reality_transport' ;;
+        congestion-control) printf 'congestion_control' ;;
+        hop-ports) printf 'hop_ports' ;;
+        peer-count) printf 'peer_count' ;;
         *) printf '%s' "$1" ;;
     esac
 }
 
 _node_cli_is_field_opt() {
     case "$1" in
-        tag|port|uuid|password|username|method|listen|listen-addr|public-port|domain|sni|flow|dest|path|mode|version|psk|up|down|masquerade|insecure|server-name|server-names-raw|private-key|public-key|short-id|short-ids|cert-path|key-path|fallback-enabled|obfs-pass|obfs-type|obfs-mode|obfs-host|kcp-seed|kcp-header|reality-transport|transport|vless-enc|shadow-tls-sni|shadow-tls-password) return 0 ;;
+        tag|port|uuid|password|username|method|listen|listen-addr|public-port|domain|sni|flow|dest|path|mode|version|psk|up|down|masquerade|insecure|server-name|server-names-raw|private-key|public-key|short-id|short-ids|cert-path|key-path|fallback-enabled|obfs-pass|obfs-type|obfs-mode|obfs-host|kcp-seed|kcp-header|reality-transport|transport|vless-enc|shadow-tls-sni|shadow-tls-password|congestion-control|hop-ports|peer-count|ech) return 0 ;;
         *) return 1 ;;
     esac
 }
@@ -566,6 +577,28 @@ _node_cli_defaults() {
             json=$(printf '%s' "$json" | jq -c --arg password "$(rand_str 20)" '
               .password //= $password | .insecure //= 0 | .domain //= ""') || return 1
             ;;
+        tuic)
+            json=$(printf '%s' "$json" | jq -c --arg uuid "$(uuid_gen)" --arg password "$(rand_str 24)" '
+              .uuid //= $uuid | .password //= $password | .insecure //= 0 | .domain //= "" |
+              .congestion_control //= "bbr"') || return 1
+            ;;
+        wireguard)
+            # shellcheck source=/dev/null
+            source "$LIB_DIR/singbox/wireguard.sh"
+            if [[ -z "$(printf '%s' "$json" | jq -r '.private_key // empty')" ]]; then
+                local wkp; wkp=$(sb_wg_keypair) || { _node_cli_err "WireGuard keys need sing-box (sing-box generate wg-keypair)"; return 1; }
+                json=$(printf '%s' "$json" | jq -c --arg k "${wkp%%$'\t'*}" --arg p "${wkp#*$'\t'}" '.private_key = $k | .public_key = $p') || return 1
+            fi
+            [[ -n "$(printf '%s' "$json" | jq -r '.subnet // empty')" ]] \
+                || json=$(printf '%s' "$json" | jq -c --arg s "$(_sb_wg_free_net)" '.subnet = $s') || return 1
+            json=$(printf '%s' "$json" | jq -c '.mtu //= 1408 | .peers //= []') || return 1
+            local wn wi; wn=$(printf '%s' "$json" | jq -r '.peer_count // 1')
+            [[ "$wn" =~ ^[0-9]+$ ]] && (( wn >= 1 && wn <= 50 )) || { _node_cli_err "--peer-count must be 1-50"; return 1; }
+            for (( wi = $(printf '%s' "$json" | jq '.peers | length'); wi < wn; wi++ )); do
+                json=$(sb_wg_new_peer "$json" "peer$((wi + 1))") || { _node_cli_err "could not generate WireGuard peer keys"; return 1; }
+            done
+            json=$(printf '%s' "$json" | jq -c 'del(.peer_count)') || return 1
+            ;;
         snell)
             local snell_default=4
             [[ "$core" == "sing-box" ]] && snell_default=5
@@ -681,6 +714,14 @@ _node_cli_validate() {
       elif $proto == "anytls" then
         ([.password,.sni,.cert_path,.key_path] | all(type == "string" and length > 0)) and
         (.insecure | type == "number" or type == "boolean")
+      elif $proto == "wireguard" then
+        ([.private_key,.public_key,.subnet] | all(type == "string" and length > 0)) and
+        (.peers | type == "array" and length > 0 and
+          all(.[]; ([.public_key,.private_key] | all(type == "string" and length > 0)) and (.host | type == "number")))
+      elif $proto == "tuic" then
+        ([.uuid,.password,.sni,.cert_path,.key_path] | all(type == "string" and length > 0)) and
+        (.insecure | type == "number" or type == "boolean") and
+        ((.congestion_control // "bbr") as $c | ["bbr","cubic","new_reno"] | index($c)) != null
       elif $proto == "snell" then
         ([.psk,.listen] | all(type == "string" and length > 0)) and
         (.version | type == "number")
@@ -693,6 +734,15 @@ _node_cli_validate() {
             # Xray 的 salamander 要求 PSK ≥4 字节，否则整个 Xray 起不来；三个核心统一收这个下限
             if ! printf '%s' "$json" | jq -e '(.obfs_pass // "") | length == 0 or length >= 4' >/dev/null; then
                 _node_cli_err "--obfs-pass must be at least 4 characters"; return 1
+            fi
+            local _hop; _hop=$(printf '%s' "$json" | jq -r '.hop_ports // ""')
+            if [[ -n "$_hop" ]]; then
+                # shellcheck source=/dev/null
+                source "$LIB_DIR/hop.sh"
+                if ! hop_range_valid "$_hop" "$(printf '%s' "$json" | jq -r '.port')" "$(printf '%s' "$json" | jq -r '.tag')"; then
+                    _node_cli_err "--hop-ports $_hop is not usable ($HOP_ERR): 1024-65535, at most $HOP_MAX_SPAN ports, no other node or UDP listener inside"
+                    return 1
+                fi
             fi
             ;;
         ss2022)
@@ -748,7 +798,7 @@ _node_cli_check_port_conflict() {
     conflict=$(printf '%s' "$all" | jq -r \
       --arg core "$core" --arg proto "$proto" --arg tag "$tag" \
       --arg transport "$transport" --argjson port "$port" '
-      def transport: if .protocol == "hysteria2" then "udp" else "tcp" end;
+      def transport: if (.protocol == "hysteria2" or .protocol == "tuic" or .protocol == "wireguard") then "udp" else "tcp" end;
       first(.[] | select(
         .port == $port and transport == $transport and
         ((.core != $core) or (.protocol != $proto) or (.tag != $tag))
@@ -760,7 +810,7 @@ _node_cli_check_port_conflict() {
 }
 
 _node_cli_transport() {
-    [[ "$1" == "hysteria2" ]] && printf udp || printf tcp
+    case "$1" in hysteria2|tuic|wireguard) printf udp ;; *) printf tcp ;; esac
 }
 
 # Core/protocol pairs that support Nginx 443 SNI fronting (listen_addr
@@ -794,6 +844,31 @@ _node_cli_port_is_listening() {
         return
     fi
     return 1
+}
+
+# --ech true|false on the sing-box/mihomo TLS pairs: generate the ECH key pair
+# (with whichever core is installed) or drop it. The store keeps only ech_key /
+# ech_config; the builders merge them (lib/common.sh _sb_ech_merge/_mh_ech_merge).
+_node_cli_ech() {   # <core> <proto> <node-json> → node JSON
+    local core="$1" proto="$2" n="$3" want name
+    want=$(printf '%s' "$n" | jq -r 'if has("ech") then (.ech | tostring) else "" end')
+    if [[ -z "$want" ]]; then printf '%s' "$n"; return 0; fi
+    case "$core/$proto" in
+        sing-box/vless|sing-box/trojan|sing-box/anytls|sing-box/hysteria2|sing-box/tuic) ;;
+        mihomo/vless|mihomo/trojan|mihomo/anytls|mihomo/hysteria2|mihomo/tuic) ;;
+        *) _node_cli_err "--ech is available for sing-box/mihomo vless, trojan, anytls, hysteria2 and tuic"; return 1 ;;
+    esac
+    case "$want" in
+        true|1)
+            if [[ -z "$(printf '%s' "$n" | jq -r '.ech_key // empty')" ]]; then
+                name=$(printf '%s' "$n" | jq -r '.sni // .domain // empty')
+                psm_ech_keypair "${name:-www.bing.com}" || { _node_cli_err "could not generate ECH keys (needs sing-box or mihomo)"; return 1; }
+                n=$(printf '%s' "$n" | jq -c --arg k "$ECH_KEY_PEM" --arg c "$ECH_CONFIG_B64" '.ech_key = $k | .ech_config = $c')
+            fi
+            printf '%s' "$n" | jq -c 'del(.ech)' ;;
+        false|0) printf '%s' "$n" | jq -c 'del(.ech, .ech_key, .ech_config)' ;;
+        *) _node_cli_err "--ech takes true or false"; return 1 ;;
+    esac
 }
 
 # The SNI that routes a node through the shared 443 map: the same key the
@@ -1117,6 +1192,7 @@ _node_cli_cmd_add() {
     # desired public fields therefore resolves to the exact existing node.
     [[ -n "$existing" ]] && node=$(jq -cn --argjson old "$existing" --argjson patch "$node" '$old * $patch')
     node=$(_node_cli_defaults "$core" "$proto" "$node") || { _node_cli_lock_release; return 1; }
+    node=$(_node_cli_ech "$core" "$proto" "$node") || { _node_cli_lock_release; return 2; }
     _node_cli_validate "$core" "$proto" "$node" add || { _node_cli_lock_release; return 2; }
     tag=$(printf '%s' "$node" | jq -r '.tag'); port=$(printf '%s' "$node" | jq -r '.port')
     if [[ "$store_only" != "true" ]]; then
@@ -1198,6 +1274,7 @@ _node_cli_cmd_update() {
              and ($new.port != $old.port)
         then $new | .public_port = $new.port
         else $new end') || return 1
+    node=$(_node_cli_ech "$core" "$proto" "$node") || return 2
     _node_cli_validate_update_side_effects "$core" "$proto" "$old_node" "$node" || return 2
     _node_cli_validate "$core" "$proto" "$node" update || return 2
     port=$(printf '%s' "$node" | jq -r '.port')
@@ -1398,7 +1475,8 @@ _node_cli_export_uri() {
                 return 0
             fi
             password=$(printf '%s' "$n" | jq -r '.password'); sni=$(printf '%s' "$n" | jq -r '.sni'); insecure=$(printf '%s' "$n" | jq -r '.insecure | if . == true then 1 elif . == false then 0 else . end'); obfs=$(printf '%s' "$n" | jq -r '.obfs_pass // ""')
-            printf 'hysteria2://%s@%s:%s?insecure=%s&sni=%s' "$(_node_cli_urlencode "$password")" "$server" "$port" "$insecure" "$(_node_cli_urlencode "$sni")"
+            printf 'hysteria2://%s@%s:%s%s?insecure=%s&sni=%s' "$(_node_cli_urlencode "$password")" "$server" "$port" \
+                "$(printf '%s' "$n" | jq -r '(.hop_ports // "") | if . == "" then "" else "," + . end')" "$insecure" "$(_node_cli_urlencode "$sni")"
             [[ -n "$obfs" ]] && printf '&obfs=%s&obfs-password=%s' \
                 "$(printf '%s' "$n" | jq -r '.obfs_type // "salamander"')" "$(_node_cli_urlencode "$obfs")"
             printf '#%s\n' "$(_node_cli_urlencode "PSM-$tag")"
@@ -1406,6 +1484,22 @@ _node_cli_export_uri() {
         anytls)
             password=$(printf '%s' "$n" | jq -r '.password'); sni=$(printf '%s' "$n" | jq -r '.sni'); insecure=$(printf '%s' "$n" | jq -r '.insecure | if . == true then 1 elif . == false then 0 else . end')
             printf 'anytls://%s@%s:%s?insecure=%s&sni=%s#%s\n' "$(_node_cli_urlencode "$password")" "$server" "$port" "$insecure" "$(_node_cli_urlencode "$sni")" "$(_node_cli_urlencode "PSM-$tag")"
+            ;;
+        wireguard)
+            # No URI for WireGuard: one wg-quick file per client
+            declare -f sb_wg_client_conf &>/dev/null || source "$LIB_DIR/singbox/wireguard.sh"
+            local wh; for wh in $(printf '%s' "$n" | jq -r '.peers[].host'); do
+                sb_wg_client_conf "$n" "$wh" "$server"; echo
+            done
+            ;;
+        tuic)
+            if [[ "$core" == "mihomo" ]]; then
+                declare -f _mh_tuic_link &>/dev/null || source "$LIB_DIR/mihomo/tuic.sh"
+                _mh_tuic_link "$n" "$server"
+            else
+                declare -f _sb_tuic_link &>/dev/null || source "$LIB_DIR/singbox/tuic.sh"
+                _sb_tuic_link "$n" "$server"
+            fi
             ;;
         snell)
             _node_cli_err 'Snell has no standard URI; use --format surge'
@@ -1462,6 +1556,11 @@ _node_cli_cmd_export() {
             [[ "$proto" == "snell" || "$proto" == "ss2022" ]] \
                 || { _node_cli_err '--format surge is only available for Snell and SS2022'; return 2; }
             _node_cli_export_surge "$n" "$server" "$proto"
+            ;;
+        ech)
+            # The ECH config clients need (mihomo ech-opts.config); not part of any share link
+            printf '%s' "$n" | jq -er '.ech_config // empty' \
+                || { _node_cli_err "$tag has no ECH; enable it with: psm node update $core $proto $tag --ech true"; return 1; }
             ;;
         *) _node_cli_err "unsupported export format: $format"; return 2 ;;
     esac

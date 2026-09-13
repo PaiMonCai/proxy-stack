@@ -51,7 +51,7 @@ The interface is available in **four languages — 简体中文 / English / 한�
 
 - **One command to enter the full management menu** — after installation, just run `psm`
 - **Triple cores** — Xray, sing-box, and mihomo are managed side by side: protocol inbounds, routing rules, and outbounds are configured independently per core without interfering
-- **Multi-protocol management** — Reality / Vision / XHTTP / Hysteria2 / Snell / SS2022 / AnyTLS can coexist under one workflow, no per-protocol scripts to maintain
+- **Multi-protocol management** — Reality / Vision / XHTTP / Hysteria2 / TUIC / WireGuard / Snell / SS2022 / AnyTLS can coexist under one workflow, no per-protocol scripts to maintain
 - **Designed for long-lived VPS instances** — not a one-off installer, but a tool that keeps update, backup, restore, service status, and hardening in one place
 - **Four-language interface** — switch between Chinese / English / Korean / Russian any time; `PSM_LANG=en psm` overrides per session
 - **Transparent and auditable** — the project is Bash-based, installs under `/opt/psm`, and documents its system write paths
@@ -224,7 +224,7 @@ The uninstaller removes the shortcut command, cron entries, systemd timers/servi
 
 ### sing-box core (second core)
 
-- **A full protocol stack parallel to Xray** — VLESS Reality, SS2022, Hysteria2, AnyTLS (requires sing-box 1.12+), and Snell (requires sing-box 1.14+) inbounds sharing one kernel and one config file
+- **A full protocol stack parallel to Xray** — VLESS Reality, SS2022, Hysteria2 (with optional port hopping), TUIC v5, AnyTLS (requires sing-box 1.12+), Snell (requires sing-box 1.14+) and a WireGuard server (standard wg-quick exports) inbounds sharing one kernel and one config file
 - **Stable and preview channels for Xray** — XTLS has marked every release since v26.3.27 as a pre-release, so the stable channel can lag months behind while preview tracks the newest build. Choosing preview warns you that from v26.4.13 REALITY refuses clients on a core older than v26.3.27 (including the cores bundled in many phone apps); the Reality menu lets you relax that per node
 - **Stable and preview release channels** — pick a kernel channel at install and upgrade time. Stable is the default; preview installs the latest beta/rc and is currently the only way to reach protocols upstream has not stabilised yet (the Snell inbound needs 1.14+, and 1.14 is still in beta). Switching back to stable while Snell nodes exist is blocked with an explanation, so the config cannot end up failing validation with the service down
 - **Routing management** — geosite / geoip / domain suffix / IP CIDR / inbound tag → chosen outbound or reject, with one-tap ad-block and QUIC-block presets
@@ -237,7 +237,7 @@ The uninstaller removes the shortcut command, cron entries, systemd timers/servi
 
 ### mihomo core (third core)
 
-- **Clash.Meta ecosystem support** — VLESS Reality, SS2022, Hysteria2, AnyTLS, and Snell v4/v5 inbounds share `/etc/mihomo/config.yaml`
+- **Clash.Meta ecosystem support** — VLESS Reality, SS2022, Hysteria2 (with optional port hopping), TUIC v5, AnyTLS, and Snell v4/v5 inbounds share `/etc/mihomo/config.yaml`; ECH can be switched on for the TLS nodes
 - **Clash-style routing** — manages `proxies` / `proxy-groups` / `rules` directly, supporting DOMAIN-SUFFIX / DOMAIN-KEYWORD / GEOSITE / GEOIP / IP-CIDR / IN-NAME with a fixed `MATCH,DIRECT` fallback
 - **Outbound manager** — ss / vless-reality / vless-tls / trojan / socks5 / anytls / snell / hysteria2 / tuic / wireguard outbound types
 - **WARP outbound reuse** — reuses the WARP account registered on the Xray side and generates a mihomo wireguard proxy

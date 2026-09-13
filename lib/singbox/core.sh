@@ -626,7 +626,9 @@ _sb_protocol_menu() {
             "$(t sb.protocol_menu.trojan)" \
             "$(t sb.protocol_menu.vmess)" \
             "$(t sb.protocol_menu.socks)" \
-            "$(t sb.protocol_menu.vless)"
+            "$(t sb.protocol_menu.vless)" \
+            "$(t sb.protocol_menu.tuic)" \
+            "$(t sb.protocol_menu.wireguard)"
 
         case "$MENU_CHOICE" in
             1) source "$(dirname "${BASH_SOURCE[0]}")/reality.sh";   sb_reality_menu ;;
@@ -638,6 +640,8 @@ _sb_protocol_menu() {
             7) source "$LIB_DIR/nginx.sh"; source "$(dirname "${BASH_SOURCE[0]}")/vmess.sh"; sb_vmess_menu ;;
             8) source "$(dirname "${BASH_SOURCE[0]}")/socks.sh"; sb_socks_menu ;;
             9) source "$LIB_DIR/nginx.sh"; source "$(dirname "${BASH_SOURCE[0]}")/vless.sh"; sb_vless_menu ;;
+            10) source "$(dirname "${BASH_SOURCE[0]}")/tuic.sh"; sb_tuic_menu ;;
+            11) source "$(dirname "${BASH_SOURCE[0]}")/wireguard.sh"; sb_wg_menu ;;
             0) return ;;
         esac
     done
@@ -659,7 +663,8 @@ sb_menu() {
             "$(t sb.menu.restart)" \
             "$(t sb.menu.status)" \
             "$(t sb.menu.logs)" \
-            "$(t sb.menu.share)"
+            "$(t sb.menu.share)" \
+            "$(t common.ech.title)"
 
         case "$MENU_CHOICE" in
             1)  sb_install;    press_enter ;;
@@ -675,6 +680,7 @@ sb_menu() {
             8)  "$SB_BIN" check -c "$SB_CFG" && log_ok "$(t sb.config_ok)" || log_error "$(t sb.config_bad)"; press_enter ;;
             9)  sb_test_restart; press_enter ;;
             10) svc_status sing-box;   press_enter ;;
+            13) _sb_require_installed && { source "$LIB_DIR/ech.sh"; ech_menu sing-box; press_enter; } ;;
             11) sb_logs ;;
             12) _sb_require_installed && { _sb_view_all_nodes; press_enter; } ;;
             0)  return ;;

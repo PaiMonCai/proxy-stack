@@ -121,7 +121,8 @@ _xhy2_apply_all() {
     for ((i = 0; i < count; i++)); do
         xray_add_inbound "$(_xhy2_build_inbound "$(echo "$nodes" | jq ".[$i]")")"
     done
-    xray_test_restart
+    xray_test_restart || return 1
+    source "$LIB_DIR/hop.sh" && psm_hop_sync
 }
 
 # ── Share URI ─────────────────────────────────────────────────────────────────
@@ -139,7 +140,8 @@ _xhy2_share_uri() {
         [[ -n "$pin" ]] && q="${q}&pinSHA256=$(url_encode "$pin")"
     fi
     [[ -n "$obfs" ]] && q="${q}&obfs=${otype}&obfs-password=$(url_encode "$obfs")"
-    printf 'hysteria2://%s@%s:%s?%s#PSM-%s\n' "$(url_encode "$pass")" "$host" "$port" "$q" "$tag"
+    local hop; hop=$(echo "$n" | jq -r '.hop_ports // ""')
+    printf 'hysteria2://%s@%s:%s?%s#PSM-%s\n' "$(url_encode "$pass")" "$host" "${port}${hop:+,$hop}" "$q" "$tag"
 }
 
 xhy2_show_share() {
@@ -180,13 +182,17 @@ xhy2_add_node() {
         [[ "$oc" == "2" ]] && obfs_type="gecko"
     fi
 
+    local hop_ports=""
+    source "$LIB_DIR/hop.sh"; ask_hy2_hop_ports hop_ports "$port" "$tag"
+
     local node
-    node=$(jq -n --arg tag "$tag" --argjson port "$port" --arg pass "$password" \
+    node=$(jq -n --arg hop "$hop_ports" --arg tag "$tag" --argjson port "$port" --arg pass "$password" \
         --arg domain "$domain" --arg sni "$sni" --arg cert "$cert" --arg key "$key" \
         --argjson insec "$insecure" --arg obfs "$obfs_pass" --arg otype "$obfs_type" \
         '{tag:$tag, port:$port, password:$pass, domain:$domain, sni:$sni,
           cert_path:$cert, key_path:$key, insecure:$insec, listen_addr:"0.0.0.0", obfs_pass:$obfs}
-         | (if $obfs != "" then .obfs_type = $otype else . end)')
+         | (if $obfs != "" then .obfs_type = $otype else . end)
+         | (if $hop != "" then .hop_ports = $hop else . end)')
     local prev; prev=$(_xhy2_load)
     _xhy2_upsert "$node"
     _xhy2_apply_all || { _xhy2_save "$prev"; log_error "$(t xray.hy2.reverted)"; return 1; }

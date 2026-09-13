@@ -47,7 +47,9 @@ _sb_anytls_select_node() {
 }
 
 # ── Build sing-box anytls inbound ─────────────────────────────────────────────
-_sb_anytls_build_inbound() {
+# ECH is merged in when the node has keys (lib/common.sh: _sb_ech_merge)
+_sb_anytls_build_inbound() { _sb_anytls_build_inbound_base "$1" | _sb_ech_merge "$1"; }
+_sb_anytls_build_inbound_base() {
     local node_json="$1"
     local tag;  tag=$(echo "$node_json"  | jq -r '.tag')
     local port; port=$(echo "$node_json" | jq -r '.port')

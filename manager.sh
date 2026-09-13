@@ -264,6 +264,8 @@ _view_all_nodes() {
     source "$LIB_DIR/singbox/reality.sh"   2>/dev/null; _sb_reality_show_node_list 2>/dev/null || true
     source "$LIB_DIR/singbox/ss2022.sh"    2>/dev/null; _sb_ss_show_node_list      2>/dev/null || true
     source "$LIB_DIR/singbox/hysteria2.sh" 2>/dev/null; _sb_hy2_show_node_list     2>/dev/null || true
+    source "$LIB_DIR/singbox/tuic.sh"      2>/dev/null; _sb_tuic_show_node_list    2>/dev/null || true
+    source "$LIB_DIR/singbox/wireguard.sh" 2>/dev/null; _sb_wg_show_node_list      2>/dev/null || true
     source "$LIB_DIR/singbox/anytls.sh"    2>/dev/null; _sb_anytls_show_node_list  2>/dev/null || true
     source "$LIB_DIR/singbox/snell.sh"     2>/dev/null; _sb_snell_show_node_list   2>/dev/null || true
     source "$LIB_DIR/singbox/trojan.sh"    2>/dev/null; _sb_trojan_show_node_list  2>/dev/null || true
@@ -274,6 +276,7 @@ _view_all_nodes() {
     source "$LIB_DIR/mihomo/reality.sh"   2>/dev/null; _mh_reality_show_node_list 2>/dev/null || true
     source "$LIB_DIR/mihomo/ss2022.sh"    2>/dev/null; _mh_ss_show_node_list      2>/dev/null || true
     source "$LIB_DIR/mihomo/hysteria2.sh" 2>/dev/null; _mh_hy2_show_node_list     2>/dev/null || true
+    source "$LIB_DIR/mihomo/tuic.sh"      2>/dev/null; _mh_tuic_show_node_list    2>/dev/null || true
     source "$LIB_DIR/mihomo/anytls.sh"    2>/dev/null; _mh_anytls_show_node_list  2>/dev/null || true
     source "$LIB_DIR/mihomo/snell.sh"     2>/dev/null; _mh_snell_show_node_list   2>/dev/null || true
     source "$LIB_DIR/mihomo/trojan.sh"    2>/dev/null; _mh_trojan_show_node_list  2>/dev/null || true

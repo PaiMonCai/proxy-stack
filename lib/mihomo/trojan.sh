@@ -54,7 +54,9 @@ _mh_trojan_select_node() {
 #   anytls / hysteria2 → map[string]string
 #   vless-reality / trojan → []struct{Username, Password/UUID}
 # 写错会让 mihomo -t 拒绝整份配置。快照 tests/snapshots/mihomo-trojan.json 钉住这一点。
-_mh_trojan_build_listener() {
+# ECH is merged in when the node has keys (lib/common.sh: _mh_ech_merge)
+_mh_trojan_build_listener() { _mh_trojan_build_listener_base "$1" | _mh_ech_merge "$1"; }
+_mh_trojan_build_listener_base() {
     local node_json="$1"
     local tag;  tag=$(echo "$node_json"  | jq -r '.tag')
     local port; port=$(echo "$node_json" | jq -r '.port')

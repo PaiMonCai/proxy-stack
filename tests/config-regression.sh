@@ -41,6 +41,9 @@ source "$PSM_ROOT/lib/xray/routing.sh"
 source "$PSM_ROOT/lib/xray/hysteria2.sh"
 source "$PSM_ROOT/lib/singbox/hysteria2.sh"
 source "$PSM_ROOT/lib/mihomo/hysteria2.sh"
+source "$PSM_ROOT/lib/singbox/tuic.sh"
+source "$PSM_ROOT/lib/mihomo/tuic.sh"
+source "$PSM_ROOT/lib/singbox/wireguard.sh"
 source "$PSM_ROOT/lib/mihomo/ss2022.sh"
 source "$PSM_ROOT/lib/mihomo/snell.sh"
 
@@ -216,6 +219,11 @@ assert_snapshot mihomo-hy2-salamander  mihomo_hy2_salamander  _mh_hy2_build_list
 assert_snapshot mihomo-hy2-gecko       mihomo_hy2_gecko       _mh_hy2_build_listener
 assert_snapshot xray-hy2-plain         xray_hy2_plain         _xhy2_build_inbound
 assert_snapshot xray-hy2-gecko         xray_hy2_gecko         _xhy2_build_inbound
+assert_snapshot singbox-tuic           singbox_tuic           _sb_tuic_build_inbound
+assert_snapshot mihomo-tuic            mihomo_tuic            _mh_tuic_build_listener
+assert_snapshot singbox-wireguard      singbox_wireguard      _sb_wg_build_endpoint
+assert_snapshot singbox-hy2-ech        singbox_hy2_ech        _sb_hy2_build_inbound
+assert_snapshot mihomo-hy2-ech         mihomo_hy2_ech         _mh_hy2_build_listener
 
 # VLESS Encryption（后量子）：decryption 串原样写进入站；Vision / XHTTP 启用后
 # fallbacks 必须清空——Xray 规定两者互斥（两张夹具都故意开着 fallback_enabled）。

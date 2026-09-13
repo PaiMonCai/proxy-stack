@@ -38,6 +38,8 @@ with_test_certs() {
                  (if test("(fullchain\\.pem|\\.crt)$") then $crt
                   elif test("(privkey\\.pem|\\.key)$") then $key
                   else . end)
+             elif type == "object" and (.type // "") == "wireguard" then
+                 .   # real WireGuard keys: standard padded base64, not the X25519 placeholder form
              elif type == "object" then
                  with_entries(if .key == "privateKey" or .key == "private_key"
                                  or .key == "private-key"
@@ -136,7 +138,10 @@ validate_singbox() {
             fi
             continue
         fi
-        if jq -e 'has("listen_port")' <<<"$frag" >/dev/null; then
+        if jq -e '.type == "wireguard"' <<<"$frag" >/dev/null; then
+            # A WireGuard server is an endpoint, not an inbound (lib/singbox/wireguard.sh)
+            jq -n --argjson e "$frag" '{endpoints: [$e], outbounds: [{type: "direct", tag: "direct"}]}' > "$cfg"
+        elif jq -e 'has("listen_port")' <<<"$frag" >/dev/null; then
             jq -n --argjson i "$frag" '{inbounds: [$i], outbounds: [{type: "direct", tag: "direct"}]}' > "$cfg"
         else
             # Outbounds may reference the "psm-local" resolver that the real

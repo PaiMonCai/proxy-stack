@@ -48,7 +48,9 @@ _sb_hy2_select_node() {
 }
 
 # ── Build sing-box hysteria2 inbound ──────────────────────────────────────────
-_sb_hy2_build_inbound() {
+# ECH is merged in when the node has keys (lib/common.sh: _sb_ech_merge)
+_sb_hy2_build_inbound() { _sb_hy2_build_inbound_base "$1" | _sb_ech_merge "$1"; }
+_sb_hy2_build_inbound_base() {
     local node_json="$1"
     local tag;   tag=$(echo "$node_json"   | jq -r '.tag')
     local port;  port=$(echo "$node_json"  | jq -r '.port')
@@ -108,7 +110,8 @@ _sb_hy2_apply() {
         local node; node=$(echo "$nodes" | jq ".[$i]")
         sb_add_inbound "$(_sb_hy2_build_inbound "$node")"
     done
-    sb_test_restart
+    sb_test_restart || return 1
+    source "$LIB_DIR/hop.sh" && psm_hop_sync
 }
 
 # 事务化：apply 失败时把节点存储还原为快照 $1，并提示本次变更已撤销。
@@ -132,9 +135,10 @@ _sb_hy2_uri() {
     insec=$(echo "$node" | jq -r '.insecure')
     obfs=$(echo "$node"  | jq -r '.obfs_pass // ""')
     otype=$(echo "$node" | jq -r '.obfs_type // "salamander"')
+    local hop; hop=$(echo "$node" | jq -r '.hop_ports // ""')
 
     local ip; ip=$(get_ipv4)
-    local uri="hysteria2://${pass}@${ip}:${port}?insecure=${insec}&sni=${sni}"
+    local uri="hysteria2://${pass}@${ip}:${port}${hop:+,$hop}?insecure=${insec}&sni=${sni}"
     [[ -n "$obfs" ]] && uri="${uri}&obfs=${otype}&obfs-password=${obfs}"
     uri="${uri}#PSM-${tag}"
 
@@ -145,6 +149,7 @@ _sb_hy2_uri() {
     printf "  %-12s %s\n" "$(t sb.hy2.label_pass):"   "$pass"
     printf "  %-12s %s\n" "SNI:"                      "$sni"
     [[ -n "$obfs" ]] && printf "  %-12s %s\n" "Obfs:" "$otype"
+    [[ -n "$hop" ]] && printf "  %-12s %s\n" "$(t common.hop.label):" "$hop"
     echo ""
     echo -e "${BOLD}$(t sb.hy2.link_label):${NC}"
     echo "  $uri"
@@ -154,6 +159,7 @@ _sb_hy2_uri() {
 
     local obfs_yaml=""
     [[ -n "$obfs" ]] && obfs_yaml=$'\n    obfs: '"${otype}"$'\n    obfs-password: '"${obfs}"
+    [[ -n "$hop" ]] && obfs_yaml="${obfs_yaml}"$'\n    ports: '"${hop}"
     echo -e "\n${BOLD}$(t sb.hy2.clash_label):${NC}"
     cat <<EOF
 proxies:
@@ -221,8 +227,11 @@ sb_hy2_add_node() {
         fi
     fi
 
+    local hop_ports=""
+    source "$LIB_DIR/hop.sh"; ask_hy2_hop_ports hop_ports "$port" "$tag"
+
     local node_json
-    node_json=$(jq -n \
+    node_json=$(jq -n --arg hop "$hop_ports" \
         --arg tag "$tag" --argjson port "$port" --arg pass "$password" \
         --arg domain "$domain" --arg sni "$sni" \
         --arg cert "$cert_path" --arg key "$key_path" --argjson insec "$insecure" \
@@ -231,7 +240,8 @@ sb_hy2_add_node() {
         '{tag:$tag, port:$port, password:$pass, domain:$domain, sni:$sni,
           cert_path:$cert, key_path:$key, insecure:$insec, up:$up, down:$down,
           masquerade:$masq, obfs_pass:$obfs}
-         | (if $obfs != "" then .obfs_type = $otype else . end)')
+         | (if $obfs != "" then .obfs_type = $otype else . end)
+         | (if $hop != "" then .hop_ports = $hop else . end)')
 
     local _prev_store; _prev_store=$(_sb_hy2_load)
     _sb_hy2_upsert "$node_json"

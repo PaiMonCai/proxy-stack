@@ -1,0 +1,26 @@
+{
+  "auth_timeout": "3s",
+  "congestion_control": "bbr",
+  "heartbeat": "10s",
+  "listen": "::",
+  "listen_port": 8443,
+  "tag": "sb-tuic-t1",
+  "tls": {
+    "alpn": [
+      "h3"
+    ],
+    "certificate_path": "/etc/psm/certs/sb-tuic-t1.crt",
+    "enabled": true,
+    "key_path": "/etc/psm/certs/sb-tuic-t1.key",
+    "server_name": "www.bing.com"
+  },
+  "type": "tuic",
+  "users": [
+    {
+      "name": "psm",
+      "password": "tuic-test-pass",
+      "uuid": "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
+    }
+  ],
+  "zero_rtt_handshake": false
+}

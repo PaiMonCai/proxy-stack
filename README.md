@@ -51,7 +51,7 @@
 
 - **一条命令进入完整管理菜单**：安装后只需要运行 `psm`，所有功能都在同一个 CLI 菜单内
 - **三内核可选**：Xray、sing-box、mihomo 三套内核并行管理，协议入站、路由分流、出站节点各自独立配置，互不干扰
-- **多协议统一管理**：Reality / Vision / XHTTP / Hysteria2 / Snell / SS2022 / AnyTLS 可以共存，不需要每个协议维护一套脚本
+- **多协议统一管理**：Reality / Vision / XHTTP / Hysteria2 / TUIC / WireGuard / Snell / SS2022 / AnyTLS 可以共存，不需要每个协议维护一套脚本
 - **适合长期维护的 VPS**：不是一次性安装脚本，而是把更新、备份、恢复、服务状态和安全加固放到同一套工具里
 - **四语言界面**：中 / 英 / 韩 / 俄随时切换，`PSM_LANG=en psm` 可临时覆盖
 - **透明可审计**：项目主体是 Bash 脚本，安装目录固定在 `/opt/psm`，系统写入路径在文档中明确列出
@@ -224,7 +224,7 @@ bash /opt/psm/uninstall.sh
 
 ### sing-box 内核（第二内核）
 
-- **与 Xray 并行的完整协议栈** — VLESS Reality、SS2022、Hysteria2、AnyTLS（需 sing-box 1.12+）、Snell（需 sing-box 1.14+）多协议入站共用一个内核与配置文件
+- **与 Xray 并行的完整协议栈** — VLESS Reality、SS2022、Hysteria2（可开端口跳跃）、TUIC v5、AnyTLS（需 sing-box 1.12+）、Snell（需 sing-box 1.14+）、WireGuard 服务端（导出标准 wg-quick 配置）多协议入站共用一个内核与配置文件；TLS 类节点可一键开启 ECH
 - **Xray 稳定版 / 预览版双通道** — XTLS 自 v26.3.27 起把每个发布都标成 prerelease，稳定通道可能落后数月，预览通道可取最新构建。选预览版时会明确提示：v26.4.13 起 REALITY 默认拒绝内核老于 v26.3.27 的客户端（含不少手机 App 内置内核），可在 Reality 菜单「客户端最低内核版本」按节点放宽
 - **稳定版 / 预览版双通道** — 安装与升级时可选内核通道。默认稳定版；预览版装最新 beta/rc，用于上游尚未转正的协议（如 Snell 入站需 1.14+，而 1.14 目前仍是 beta）。已配置 Snell 节点时切回稳定版会被拦截并提示，避免配置校验失败导致服务起不来
 - **路由分流管理** — geosite / geoip / 域名后缀 / IP CIDR / 入站标签 → 指定出站或拦截，内置一键去广告、禁 QUIC 预设
@@ -237,7 +237,7 @@ bash /opt/psm/uninstall.sh
 
 ### mihomo 内核（第三内核）
 
-- **Clash.Meta 生态接入** — VLESS Reality、SS2022、Hysteria2、AnyTLS、Snell v4/v5 多协议入站共用 `/etc/mihomo/config.yaml`
+- **Clash.Meta 生态接入** — VLESS Reality、SS2022、Hysteria2（可开端口跳跃）、TUIC v5、AnyTLS、Snell v4/v5 多协议入站共用 `/etc/mihomo/config.yaml`；TLS 类节点可一键开启 ECH
 - **Clash 规则分流** — 直接管理 `proxies` / `proxy-groups` / `rules`，支持 DOMAIN-SUFFIX / DOMAIN-KEYWORD / GEOSITE / GEOIP / IP-CIDR / IN-NAME，并固定兜底 `MATCH,DIRECT`
 - **出站节点管理** — ss / vless-reality / vless-tls / trojan / socks5 / anytls / snell / hysteria2 / tuic / wireguard 等出站类型
 - **WARP 出站复用** — 复用 Xray 侧注册的 WARP 账户，生成 mihomo wireguard proxy

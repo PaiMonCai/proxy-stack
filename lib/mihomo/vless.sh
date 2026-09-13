@@ -90,7 +90,9 @@ mh_ask_vlessenc() {
 # ws → ws-path，grpc → grpc-service-name，xhttp → xhttp-config。这一点与
 # sing-box 的 transport 嵌套块完全不同，两边不能互抄。
 # flow 只在 tcp 传输下写：Vision 是 TCP 上的流控，套进 ws/grpc/xhttp 没有意义。
-_mh_vless_build_listener() {
+# ECH is merged in when the node has keys (lib/common.sh: _mh_ech_merge)
+_mh_vless_build_listener() { _mh_vless_build_listener_base "$1" | _mh_ech_merge "$1"; }
+_mh_vless_build_listener_base() {
     local node_json="$1"
     local tag;  tag=$(echo "$node_json"  | jq -r '.tag')
     local port; port=$(echo "$node_json" | jq -r '.port')

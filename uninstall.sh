@@ -16,6 +16,11 @@ echo -e "${YELLOW}$(t uninstall.warn2 "$PSM_ROOT")${NC}\n"
 
 ask_yn "$(t uninstall.confirm)" N || { log_info "$(t common.cancelled)"; exit 0; }
 
+# Hysteria2 port-hopping redirects and their boot hook (lib/hop.sh)
+if source "$(dirname "${BASH_SOURCE[0]}")/lib/hop.sh" 2>/dev/null; then
+    _hop_flush; _hop_boot_hook_remove
+fi
+
 _systemctl_disable_now() {
     local unit="$1"
     systemctl disable --now "$unit" 2>/dev/null || true

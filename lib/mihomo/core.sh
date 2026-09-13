@@ -597,7 +597,8 @@ _mh_protocol_menu() {
             "$(t mh.protocol_menu.trojan)" \
             "$(t mh.protocol_menu.vmess)" \
             "$(t mh.protocol_menu.socks)" \
-            "$(t mh.protocol_menu.vless)"
+            "$(t mh.protocol_menu.vless)" \
+            "$(t mh.protocol_menu.tuic)"
 
         case "$MENU_CHOICE" in
             1) source "$(dirname "${BASH_SOURCE[0]}")/reality.sh";   mh_reality_menu ;;
@@ -609,6 +610,7 @@ _mh_protocol_menu() {
             7) source "$LIB_DIR/nginx.sh"; source "$(dirname "${BASH_SOURCE[0]}")/vmess.sh"; mh_vmess_menu ;;
             8) source "$(dirname "${BASH_SOURCE[0]}")/socks.sh"; mh_socks_menu ;;
             9) source "$LIB_DIR/nginx.sh"; source "$(dirname "${BASH_SOURCE[0]}")/vless.sh"; mh_vless_menu ;;
+            10) source "$(dirname "${BASH_SOURCE[0]}")/tuic.sh"; mh_tuic_menu ;;
             0) return ;;
         esac
     done
@@ -630,7 +632,8 @@ mh_menu() {
             "$(t mh.menu.restart)" \
             "$(t mh.menu.status)" \
             "$(t mh.menu.logs)" \
-            "$(t mh.menu.share)"
+            "$(t mh.menu.share)" \
+            "$(t common.ech.title)"
 
         case "$MENU_CHOICE" in
             1)  mh_install;    press_enter ;;
@@ -646,6 +649,7 @@ mh_menu() {
             8)  "$MH_BIN" -t -d "$MH_CFG_DIR" -f "$MH_CFG" && log_ok "$(t mh.config_ok)" || log_error "$(t mh.config_bad)"; press_enter ;;
             9)  mh_test_restart; press_enter ;;
             10) svc_status mihomo;   press_enter ;;
+            13) _mh_require_installed && { source "$LIB_DIR/ech.sh"; ech_menu mihomo; press_enter; } ;;
             11) mh_logs ;;
             12) _mh_require_installed && { _mh_view_all_nodes; press_enter; } ;;
             0)  return ;;

@@ -749,6 +749,45 @@ reality_dest_is_local() {
     return 1
 }
 
+# ── ECH (Encrypted Client Hello) for sing-box / mihomo TLS nodes ──────────────
+# A node with ECH carries ech_key (the server's "ECH KEYS" PEM) and ech_config
+# (the base64 ECHConfigList clients need). Measured with the real cores: an
+# ECH-enabled server still accepts clients that do not use ECH, so turning it
+# on never breaks existing share links; it also works over QUIC (Hysteria2,
+# TUIC). Share links cannot carry the config: clients get it from PSM's
+# sing-box client export or `psm node export … --format ech` (mihomo ech-opts).
+
+# psm_ech_keypair <public-name>: sets ECH_KEY_PEM and ECH_CONFIG_B64, using
+# whichever of sing-box / mihomo is installed.
+psm_ech_keypair() {
+    local name="$1" out sb="${SB_BIN:-${SINGBOX_BIN:-/usr/local/bin/sing-box}}" mh="${MH_BIN:-${MIHOMO_BIN:-/usr/local/bin/mihomo}}"
+    ECH_KEY_PEM=""; ECH_CONFIG_B64=""
+    if [[ -x "$sb" ]] && out=$("$sb" generate ech-keypair "$name" 2>/dev/null); then
+        ECH_KEY_PEM=$(sed -n '/BEGIN ECH KEYS/,/END ECH KEYS/p' <<<"$out")
+        ECH_CONFIG_B64=$(sed -n '/BEGIN ECH CONFIGS/,/END ECH CONFIGS/p' <<<"$out" | grep -v -- '-----' | tr -d '\n')
+    elif [[ -x "$mh" ]] && out=$("$mh" generate ech-keypair "$name" 2>/dev/null); then
+        # mihomo prints "Config: <base64>" then "Key: -----BEGIN ECH KEYS-----" …
+        ECH_CONFIG_B64=$(sed -n 's/^Config: *//p' <<<"$out" | head -1)
+        ECH_KEY_PEM=$(sed -e 's/^Key: *//' <<<"$out" | sed -n '/BEGIN ECH KEYS/,/END ECH KEYS/p')
+    fi
+    [[ -n "$ECH_KEY_PEM" && -n "$ECH_CONFIG_B64" ]]
+}
+
+# ECH config as the PEM block sing-box clients take (tls.ech.config lines)
+psm_ech_config_pem() {
+    printf -- '-----BEGIN ECH CONFIGS-----\n%s\n-----END ECH CONFIGS-----\n' "$(fold -w 64 <<<"$1")"
+}
+
+# Builder wrappers: stdin is the inbound/listener JSON, $1 the node JSON.
+_sb_ech_merge() {
+    jq --argjson n "$1" 'if ($n.ech_key // "") != ""
+        then .tls.ech = { enabled: true, key: ($n.ech_key | split("\n") | map(select(length > 0))) }
+        else . end'
+}
+_mh_ech_merge() {
+    jq --argjson n "$1" 'if ($n.ech_key // "") != "" then ."ech-key" = $n.ech_key else . end'
+}
+
 # Free TCP port on loopback for throwaway listeners (probes).
 _psm_free_port() {
     local p i

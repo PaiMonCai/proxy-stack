@@ -41,7 +41,7 @@ _sub_collect_uris() {
         core=$(printf '%s' "$n"  | jq -r '.core')
         proto=$(printf '%s' "$n" | jq -r '.protocol')
         node=$(printf '%s' "$n"  | jq -c '.node')
-        [[ "$proto" == "snell" ]] && continue
+        [[ "$proto" == "snell" || "$proto" == "wireguard" ]] && continue   # no URI: Snell, wg-quick files
         if [[ "$proto" == "socks" ]] \
            && [[ "$(printf '%s' "$node" | jq -r '.listen_addr // ""')" == "127.0.0.1" ]]; then
             continue
@@ -130,6 +130,10 @@ _sub_build_singbox_client() {
         node=$(printf '%s' "$n"  | jq -c '.node')
         ob=$(_sub_sb_outbound "$core" "$proto" "$node" "$server" "$tag") || continue
         [[ -n "$ob" ]] || continue
+        # ECH: the one place a client can get the config (share links cannot carry it)
+        local ech; ech=$(printf '%s' "$node" | jq -r '.ech_config // ""')
+        [[ -n "$ech" ]] && ob=$(printf '%s' "$ob" | jq -c --arg pem "$(psm_ech_config_pem "$ech")" \
+            'if has("tls") then .tls.ech = { enabled: true, config: ($pem | split("\n") | map(select(length > 0))) } else . end')
         obs=$(printf '%s' "$obs"   | jq -c --argjson o "$ob" '. += [$o]')
         tags=$(printf '%s' "$tags" | jq -c --arg t "PSM-$tag" '. += [$t]')
     done < <(printf '%s' "$all" | jq -c '.[]')
@@ -198,9 +202,11 @@ _sub_sb_outbound() {
             jq -n --arg t "PSM-$tag" --arg s "$server" --argjson p "$port" \
                   --arg pw "$(printf '%s' "$n" | jq -r '.password')" \
                   --arg sn "$(printf '%s' "$n" | jq -r '.sni')" \
-                  --argjson ins "$(printf '%s' "$n" | jq -r '.insecure | if . == true then 1 elif . == false then 0 else . end')" '
+                  --argjson ins "$(printf '%s' "$n" | jq -r '.insecure | if . == true then 1 elif . == false then 0 else . end')" \
+                  --arg hop "$(printf '%s' "$n" | jq -r '.hop_ports // ""')" '
                 { type:"hysteria2", tag:$t, server:$s, server_port:$p, password:$pw,
-                  tls:{ enabled:true, server_name:$sn, insecure:($ins == 1) } }' ;;
+                  tls:{ enabled:true, server_name:$sn, insecure:($ins == 1) } }
+                + (if $hop != "" then { server_ports: [($hop | sub("-"; ":"))], hop_interval: "30s" } else {} end)' ;;
         anytls)
             jq -n --arg t "PSM-$tag" --arg s "$server" --argjson p "$port" \
                   --arg pw "$(printf '%s' "$n" | jq -r '.password')" \
@@ -208,6 +214,12 @@ _sub_sb_outbound() {
                   --argjson ins "$(printf '%s' "$n" | jq -r '.insecure | if . == true then 1 elif . == false then 0 else . end')" '
                 { type:"anytls", tag:$t, server:$s, server_port:$p, password:$pw,
                   tls:{ enabled:true, server_name:$sn, insecure:($ins == 1) } }' ;;
+        tuic)
+            jq -n --arg t "PSM-$tag" --arg s "$server" --argjson p "$port" --argjson n "$n" '
+                { type:"tuic", tag:$t, server:$s, server_port:$p, uuid:$n.uuid, password:$n.password,
+                  congestion_control:($n.congestion_control // "bbr"),
+                  tls:{ enabled:true, server_name:$n.sni, alpn:["h3"],
+                        insecure:(($n.insecure // 0) | tostring | test("^(1|true)$")) } }' ;;
         *) printf '' ;;   # vision/xhttp/snell/socks 交给 URI 订阅，不进原生配置
     esac
 }

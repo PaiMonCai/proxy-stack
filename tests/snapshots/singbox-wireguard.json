@@ -1,0 +1,18 @@
+{
+  "address": [
+    "10.66.1.1/24"
+  ],
+  "listen_port": 51820,
+  "mtu": 1408,
+  "peers": [
+    {
+      "allowed_ips": [
+        "10.66.1.2/32"
+      ],
+      "public_key": "aHNy7ehIePwBZi9/cd2e0X2gUqLg0ZVf6LK1CoPExUI="
+    }
+  ],
+  "private_key": "mJNRPhcO4yIKNynz86By/fFe/dwvW7PnDLNrTCOtA30=",
+  "tag": "sb-wg-t1",
+  "type": "wireguard"
+}
