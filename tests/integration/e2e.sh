@@ -91,7 +91,7 @@ M=/root/e2e-client; rm -rf "$M"; mkdir -p "$M"
 bash -c 'source lib/common.sh; source lib/subscribe.sh; _sub_build_uri_sub 127.0.0.1' > "$M/sub.txt" 2>/dev/null
 n=$(openssl base64 -d -A < "$M/sub.txt" 2>/dev/null | grep -c '://')
 (( n >= ${#ADDED[@]} )) && ok "subscription holds $n links" || bad "subscription holds $n links for ${#ADDED[@]} nodes"
-cat /etc/ssl/certs/ca-certificates.crt "$CA/ca.crt" > "$M/ca-bundle.pem"
+cat "$(ls /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt 2>/dev/null | head -1)" "$CA/ca.crt" > "$M/ca-bundle.pem"
 # The client config is PSM's own mihomo export, as users import it. Only two
 # test-only changes: the provider reads the subscription from a local file (its
 # URL would serve exactly that), and the GEOIP rule goes (it needs a database

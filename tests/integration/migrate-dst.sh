@@ -51,7 +51,7 @@ M=/root/mig-client; rm -rf "$M"; mkdir -p "$M"
 # here the rule's presence is checked above).
 bash -c 'source lib/common.sh; source lib/subscribe.sh; _sub_collect_uris 127.0.0.1' 2>/dev/null \
     | sed -E 's/(@127\.0\.0\.1:[0-9]+),[0-9]+-[0-9]+/\1/' | openssl base64 -A > "$M/sub.txt"
-cat /etc/ssl/certs/ca-certificates.crt "$E/ca.crt" > "$M/ca-bundle.pem"
+cat "$(ls /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt 2>/dev/null | head -1)" "$E/ca.crt" > "$M/ca-bundle.pem"
 bash -c 'source lib/common.sh; source lib/subscribe.sh; _sub_build_mihomo_client 127.0.0.1' > "$M/export.yaml" 2>/dev/null
 # the same test-only changes as e2e.sh: local provider file, no GEOIP, own ports, API on
 {

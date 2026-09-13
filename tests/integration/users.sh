@@ -75,7 +75,7 @@ probe() {
     [[ "${2:-}" == once ]] && tries=1
     rm -rf "$D"; mkdir -p "$D"
     openssl base64 -A < "$1" > "$D/prov.txt"
-    cat /etc/ssl/certs/ca-certificates.crt "$CA/ca.crt" > "$D/ca.pem"
+    cat "$(ls /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt 2>/dev/null | head -1)" "$CA/ca.crt" > "$D/ca.pem"
     printf 'mixed-port: 17890\nbind-address: 127.0.0.1\nexternal-controller: 127.0.0.1:19090\nproxy-providers:\n  p: {type: file, path: ./prov.txt}\nproxy-groups:\n  - {name: G, type: select, use: [p]}\nrules:\n  - MATCH,G\n' > "$D/config.yaml"
     want=$(grep -c . "$1")
     (( want > 0 )) || { echo "(no links in $1)"; return 0; }

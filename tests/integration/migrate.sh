@@ -33,11 +33,13 @@ if [[ "$mode" == push ]]; then
     # The new server: nothing but an SSH server that trusts the old one's key.
     docker exec "$dst" sh -c '
         if command -v apk >/dev/null; then apk add -q --no-cache openssh-server >/dev/null
+        elif command -v dnf >/dev/null; then dnf -y -q install openssh-server >/dev/null 2>&1
         else apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq openssh-server >/dev/null 2>&1; fi
         ssh-keygen -A >/dev/null && mkdir -p /run/sshd /root/.ssh && chmod 700 /root/.ssh
         pgrep -x sshd >/dev/null || /usr/sbin/sshd'
     docker exec "$src" sh -c '
         command -v ssh-keygen >/dev/null || { if command -v apk >/dev/null; then apk add -q --no-cache openssh-client >/dev/null
+            elif command -v dnf >/dev/null; then dnf -y -q install openssh-clients >/dev/null 2>&1
             else apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq openssh-client >/dev/null 2>&1; fi; }
         [ -f /root/.ssh/id_ed25519 ] || ssh-keygen -q -t ed25519 -N "" -f /root/.ssh/id_ed25519'
     docker exec "$src" cat /root/.ssh/id_ed25519.pub \
