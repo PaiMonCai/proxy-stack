@@ -39,7 +39,9 @@ psm_update_scripts() {
             git -C "$PSM_ROOT" diff HEAD > "$patch" 2>/dev/null && log_warn "$(t update.local_saved "$patch")"
         fi
         timeout 5 git -C "$PSM_ROOT" reset -q --hard HEAD 2>/dev/null || true
-        timeout 30 git -C "$PSM_ROOT" pull --ff-only \
+        psm_repo_slim "$PSM_ROOT" 2>/dev/null || true
+        # --no-stat: a diffstat would download the files the slim checkout skips
+        timeout 30 git -C "$PSM_ROOT" pull --ff-only --no-stat \
             && log_ok "$(t update.git_done)" \
             || log_error "$(t update.git_fail)"
     else

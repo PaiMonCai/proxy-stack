@@ -89,6 +89,10 @@ jobs:
           - { os: ubuntu24, suite: e2e }
           - { os: ubuntu22, suite: full }
           - { os: ubuntu22, suite: e2e }
+          - { os: debian,   suite: slim }
+          - { os: alpine,   suite: slim }
+          - { os: alma8,    suite: slim }
+          - { os: debian10, suite: slim }
     steps:
       - uses: actions/checkout@v4
       - name: tests/integration/container.sh ${{ matrix.os }} ${{ matrix.suite }}

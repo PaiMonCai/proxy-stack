@@ -241,6 +241,35 @@ gh_latest_tag() {   # <owner/repo>
     printf '%s' "$tag"
 }
 
+# ── Slim checkout of PSM itself ──────────────────────────────────────────────
+# A server needs the scripts, not the READMEs, screenshots, CI files and tests.
+# Sparse checkout keeps those out of $PSM_ROOT; the partial-clone filter keeps
+# later pulls from downloading their contents at all. An older full clone is
+# converted in place. Idempotent. bootstrap.sh has a copy (_psm_slim) for the
+# first clone, before this file exists: keep the two in step
+# (tests/integration/slim.sh compares them).
+psm_repo_slim() {   # [repo dir]
+    local d="${1:-$PSM_ROOT}" want
+    [[ -d "$d/.git" ]] || return 0
+    want=$(printf '%s\n' '/*' '!/README*.md' '!/.github/' '!/tests/')
+    if [[ "$(git -C "$d" config --get core.sparseCheckout || true)" != true \
+          || "$(cat "$d/.git/info/sparse-checkout" 2>/dev/null)" != "$want" ]]; then
+        mkdir -p "$d/.git/info"
+        printf '%s\n' "$want" > "$d/.git/info/sparse-checkout"
+        git -C "$d" config core.sparseCheckout true
+        git -C "$d" read-tree -mu HEAD || return 1
+    fi
+    if [[ -z "$(git -C "$d" config --get remote.origin.promisor || true)" ]]; then
+        git -C "$d" config remote.origin.promisor true
+        git -C "$d" config remote.origin.partialclonefilter blob:none
+        # git before 2.24 knows the promisor remote only from this extension,
+        # and takes the filter for later fetches from core.partialCloneFilter
+        git -C "$d" config core.repositoryformatversion 1
+        git -C "$d" config extensions.partialClone origin
+        git -C "$d" config core.partialCloneFilter blob:none
+    fi
+}
+
 # ── Tables ───────────────────────────────────────────────────────────────────
 # Aligns tab-separated rows into columns. Not `column -t`: a minimal Debian
 # has no bsdextrautils, and lists piped through it came out empty there.

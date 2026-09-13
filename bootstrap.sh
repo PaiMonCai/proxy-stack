@@ -42,8 +42,8 @@ fi
 set -euo pipefail
 
 # ── Config ────────────────────────────────────────────────────────────────────
-PSM_REPO="https://github.com/jinqians/proxy-stack.git"   # ← fill in before publishing
-PSM_BRANCH="main"
+PSM_REPO="${PSM_REPO:-https://github.com/jinqians/proxy-stack.git}"
+PSM_BRANCH="${PSM_BRANCH:-main}"
 PSM_DIR="/opt/psm"
 
 # ── Colors ────────────────────────────────────────────────────────────────────
@@ -119,6 +119,30 @@ if ! command -v git &>/dev/null; then
     log_ok "$(bt "git 已安装。" "git installed.")"
 fi
 
+# ── Slim checkout ─────────────────────────────────────────────────────────────
+# 服务器只需要脚本：README、截图、CI 配置和测试不放进 $PSM_DIR（sparse checkout），
+# 之后 pull 也不下载它们的内容（partial clone 过滤）。老的完整克隆在这里就地转换。
+# 与 lib/common.sh 的 psm_repo_slim 相同（菜单自动更新和 update.sh 用那份），两处同步修改。
+_psm_slim() {   # <repo dir>
+    local d="$1" want
+    want=$(printf '%s\n' '/*' '!/README*.md' '!/.github/' '!/tests/')
+    if [[ "$(git -C "$d" config --get core.sparseCheckout || true)" != true \
+          || "$(cat "$d/.git/info/sparse-checkout" 2>/dev/null)" != "$want" ]]; then
+        mkdir -p "$d/.git/info"
+        printf '%s\n' "$want" > "$d/.git/info/sparse-checkout"
+        git -C "$d" config core.sparseCheckout true
+        git -C "$d" read-tree -mu HEAD
+    fi
+    if [[ -z "$(git -C "$d" config --get remote.origin.promisor || true)" ]]; then
+        git -C "$d" config remote.origin.promisor true
+        git -C "$d" config remote.origin.partialclonefilter blob:none
+        # git 2.24 之前只认这个扩展项，之后的 fetch 过滤条件也只读 core.partialCloneFilter
+        git -C "$d" config core.repositoryformatversion 1
+        git -C "$d" config extensions.partialClone origin
+        git -C "$d" config core.partialCloneFilter blob:none
+    fi
+}
+
 # ── Clone or update ───────────────────────────────────────────────────────────
 if [[ -d "$PSM_DIR/.git" ]]; then
     log_step "$(bt "正在更新已安装的 PSM（$PSM_DIR）..." "Updating existing PSM installation at $PSM_DIR ...")"
@@ -133,7 +157,10 @@ if [[ -d "$PSM_DIR/.git" ]]; then
         git -C "$PSM_DIR" reset -q --hard HEAD
         log_warn "$(bt "$PSM_DIR 中有本地修改，已保存到 $psm_patch 并还原，以便更新。" "Local changes in $PSM_DIR were saved to $psm_patch and reverted so the update can proceed.")"
     fi
-    if ! git -C "$PSM_DIR" pull --ff-only; then
+    _psm_slim "$PSM_DIR" || log_warn "$(bt "精简检出失败，按完整检出继续更新。" "Could not slim the checkout; updating the full checkout instead.")"
+    # --no-stat: the diffstat after a fast-forward reads every changed file,
+    # which would download the READMEs and screenshots the slim checkout skips.
+    if ! git -C "$PSM_DIR" pull --ff-only --no-stat; then
         # 历史分叉（本地提交、被改写的浅克隆等）：以远端为准，本地提交仍可从 git reflog 找回
         log_warn "$(bt "无法快进更新，正在重置到远端 $PSM_BRANCH（本地提交可用 git reflog 找回）..." "Cannot fast-forward; resetting to remote $PSM_BRANCH (local commits stay in git reflog)...")"
         git -C "$PSM_DIR" fetch origin "$PSM_BRANCH"
@@ -155,7 +182,9 @@ if [[ -d "$PSM_DIR/.git" ]]; then
 fi
 
 log_step "$(bt "正在克隆 PSM 到 $PSM_DIR ..." "Cloning PSM to $PSM_DIR ...")"
-git clone --depth=1 -b "$PSM_BRANCH" "$PSM_REPO" "$PSM_DIR"
+git clone --depth=1 --filter=blob:none --no-checkout -b "$PSM_BRANCH" "$PSM_REPO" "$PSM_DIR"
+_psm_slim "$PSM_DIR"
+[[ -f "$PSM_DIR/install.sh" ]] || die "$(bt "检出失败：$PSM_DIR 中没有 install.sh。" "Checkout failed: no install.sh in $PSM_DIR.")"
 log_ok "$(bt "仓库已下载。" "Repository downloaded.")"
 
 # ── Hand off to the real installer ───────────────────────────────────────────

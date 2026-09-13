@@ -130,8 +130,9 @@ _auto_update() {
     log_step "$(t mgr.update.checking)"
     # Discard any local modifications to script files before pulling.
     # User data lives in /etc/psm/, not in the git repo, so dropping
-    # uncommitted changes to scripts is always safe.
-    timeout 5  git -C "$PSM_ROOT" checkout -- . 2>/dev/null || true
+    # uncommitted changes to scripts is always safe. Same as update.sh.
+    timeout 5  git -C "$PSM_ROOT" reset -q --hard HEAD 2>/dev/null || true
+    psm_repo_slim "$PSM_ROOT" 2>/dev/null || true
     timeout 15 git -C "$PSM_ROOT" pull --ff-only -q 2>/dev/null || return 0
     local after
     after=$(git -C "$PSM_ROOT" rev-parse HEAD 2>/dev/null) || return 0
