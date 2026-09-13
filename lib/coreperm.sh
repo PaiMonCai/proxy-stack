@@ -26,6 +26,40 @@ _coreperm_cert_roots() {
         "${SINGBOX_CFG_DIR:-/etc/sing-box}" "${MIHOMO_CFG_DIR:-/etc/mihomo}" /etc/hysteria
 }
 
+# systemd older than 231 (Amazon Linux 2 ships 219) knows neither
+# AmbientCapabilities (229) nor ExecStartPre=+ (231): an unprivileged core
+# could not bind its port there, so the cores stay root. PSM_SYSTEMD_VERSION
+# overrides the detected version (tests).
+psm_core_nonroot_supported() {
+    _uses_systemd || return 0
+    local v="${PSM_SYSTEMD_VERSION:-}"
+    [[ -n "$v" ]] || v=$(systemctl --version 2>/dev/null | awk 'NR == 1 {print $2}')
+    [[ "$v" =~ ^[0-9]+$ ]] || return 0
+    (( v >= 231 ))
+}
+
+# The [Service] lines that decide who the core runs as.
+psm_core_unit_lines() {   # <xray|sing-box|mihomo>
+    if psm_core_nonroot_supported; then
+        cat <<EOF
+User=${PSM_CORE_USER}
+Group=${PSM_CORE_USER}
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+# '+' runs this as root: it keeps what psm-core must read readable (lib/coreperm.sh)
+ExecStartPre=+/bin/bash ${LIB_DIR}/coreperm.sh $1
+EOF
+    else
+        cat <<EOF
+# systemd older than 231: too old to start the core unprivileged (lib/coreperm.sh).
+# Root keeps all its capabilities: files a newer PSM gave to psm-core stay readable.
+User=root
+NoNewPrivileges=true
+EOF
+    fi
+}
+
 psm_core_user_ensure() {
     id -u "$PSM_CORE_USER" &>/dev/null && return 0
     if command -v useradd &>/dev/null; then
@@ -118,6 +152,8 @@ _coreperm_unit_nonroot() {
 # written, and move a unit that still runs the core as root to psm-core once.
 psm_core_nonroot_ensure() {
     local core="$1" def
+    # too old a systemd: the core stays root, and its files stay root's too
+    psm_core_nonroot_supported || return 0
     psm_core_perms "$core" || return 0
     if _uses_systemd; then def="/etc/systemd/system/${core}.service"; else def="/etc/init.d/${core}"; fi
     [[ -f "$def" ]] || return 0

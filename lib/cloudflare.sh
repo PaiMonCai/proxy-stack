@@ -69,7 +69,7 @@ cf_list_dns() {
     [[ -z "$zone_id" || "$zone_id" == "null" ]] && { log_error "$(t cf.zone.not_found)"; return 1; }
     _cf_curl "$CF_API/zones/$zone_id/dns_records?per_page=100" \
         | jq -r '.result[] | "\(.id)\t\(.type)\t\(.name)\t\(.content)\tproxied:\(.proxied)"' 2>/dev/null \
-        | column -t
+        | psm_table
 }
 
 cf_add_dns() {

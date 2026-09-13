@@ -49,6 +49,7 @@ install_base_packages() {
     ensure_alpine_base
     # ensure_pkg_deps 逐个安装：任何一个包失败都不影响其余的。
     ensure_pkg_deps curl wget unzip jq openssl socat qrencode
+    ensure_modern_jq   # EL8 / EL9 ship jq 1.6 (see lib/common.sh)
     # 这些是 PSM 运行的硬性依赖，缺了直接失败并给出明确指引。
     require_cmd curl jq unzip openssl
     log_ok "$(t install.deps_done)"

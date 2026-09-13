@@ -42,6 +42,11 @@ ACME_HOME="/root/.acme.sh"
 
 PSM_STATE="$CFG_DIR/psm.state"   # key=value runtime state
 
+# /usr/local/bin first: PSM's cores live there, and so does the jq it installs
+# where the distro's is too old (ensure_modern_jq). cron and some systemd
+# units run PSM with a PATH that lacks it or puts it last.
+PATH="/usr/local/bin:${PATH}"
+
 # ── Logging ───────────────────────────────────────────────────────────────────
 # 全部写 stderr（不只是 log_error）。日志是给人看的诊断信息，不是函数的返回值：
 # 本仓库有大量「stdout 返回一个值、中途 log_step 报进度」的函数，例如三个核心的
@@ -176,6 +181,75 @@ ensure_epel() {
     esac
     log_warn "$(t common.epel.failed)"
     return 1
+}
+
+# ── jq 1.7 or newer ──────────────────────────────────────────────────────────
+# jq 1.6 (the EL8 / EL9 package) exits 0 for `jq -e` on empty input, where 1.7
+# exits 4, and PSM branches on `jq -e` in many places whose input can be empty
+# (an outbound that is not there, an empty store). On such a host PSM installs
+# the official static jq, checked against the release's sha256sum.txt, into
+# /usr/local/bin, which is first on PATH for everything PSM runs.
+PSM_JQ_VERSION="1.8.1"
+
+_jq_is_modern() {   # [jq binary]
+    local v; v=$("${1:-jq}" --version 2>/dev/null) || return 1
+    [[ "${v#jq-}" =~ ^([0-9]+)\.([0-9]+) ]] || return 1
+    (( BASH_REMATCH[1] > 1 || BASH_REMATCH[2] >= 7 ))
+}
+
+ensure_modern_jq() {
+    _jq_is_modern && return 0
+    local arch dir="/usr/local/bin" base sums
+    case "$(uname -m)" in
+        x86_64) arch=amd64 ;; aarch64|arm64) arch=arm64 ;; armv7l|armv7) arch=armhf ;;
+        *) log_warn "$(t common.jq.old "$(jq --version 2>/dev/null)")"; return 0 ;;
+    esac
+    base="https://github.com/jqlang/jq/releases/download/jq-${PSM_JQ_VERSION}"
+    mkdir -p "$dir"
+    if curl -fsSL -o "$dir/.jq.new" "$base/jq-linux-${arch}" \
+        && sums=$(curl -fsSL "$base/sha256sum.txt") \
+        && [[ "$(sha256sum "$dir/.jq.new" | awk '{print $1}')" == \
+              "$(awk -v f="jq-linux-${arch}" '$2 == f {print $1}' <<<"$sums")" ]] \
+        && chmod 755 "$dir/.jq.new" && _jq_is_modern "$dir/.jq.new"; then
+        mv -f "$dir/.jq.new" "$dir/jq"
+        hash -r
+        log_ok "$(t common.jq.upgraded "$("$dir/jq" --version)")"
+    else
+        rm -f "$dir/.jq.new"
+        log_warn "$(t common.jq.old "$(jq --version 2>/dev/null)")"
+    fi
+    return 0
+}
+
+# ── Latest release of a GitHub project ───────────────────────────────────────
+# The /releases/latest redirect comes first: api.github.com allows 60 requests
+# an hour per IP without a token, which a few installs behind one address use
+# up, and every core install then fell back to an old pinned version (sing-box
+# 1.13 cannot run Snell or gecko nodes). The redirect is not rate limited; it
+# is followed to the end (apernet/hysteria now redirects to HyNetworks/hysteria)
+# and URL-encoded tags such as app%2Fv2.6.1 are decoded. The API is the second
+# try; callers keep their pinned fallback for when both fail.
+gh_latest_tag() {   # <owner/repo>
+    local url tag=""
+    url=$(curl -fsSIL --max-time 15 -o /dev/null -w '%{url_effective}' \
+        "https://github.com/$1/releases/latest" 2>/dev/null || true)
+    if [[ "$url" == */releases/tag/* ]]; then
+        tag=${url##*/releases/tag/}; tag=${tag//%2F//}; tag=${tag//%2f//}
+    fi
+    [[ -n "$tag" ]] || tag=$(curl -fsSL --max-time 15 "https://api.github.com/repos/$1/releases/latest" 2>/dev/null \
+        | jq -r '.tag_name // empty' 2>/dev/null || true)
+    printf '%s' "$tag"
+}
+
+# ── Tables ───────────────────────────────────────────────────────────────────
+# Aligns tab-separated rows into columns. Not `column -t`: a minimal Debian
+# has no bsdextrautils, and lists piped through it came out empty there.
+psm_table() {
+    awk -F'\t' '{ for (i = 1; i <= NF; i++) { c[NR, i] = $i; if (length($i) > w[i]) w[i] = length($i) }
+                   if (NF > nf) nf = NF }
+                 END { for (r = 1; r <= NR; r++) { line = ""
+                           for (i = 1; i <= nf; i++) line = line sprintf("%-" w[i] "s", c[r, i]) (i < nf ? "  " : "")
+                           print line } }'
 }
 
 # ── Cron daemon (for /etc/cron.d drop-ins) ────────────────────────────────────

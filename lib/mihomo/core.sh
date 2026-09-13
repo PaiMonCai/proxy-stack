@@ -40,8 +40,7 @@ mh_install() {
     local tag="${PSM_MH_TAG:-}"   # psm migrate installs the version the old server ran
     if [[ -z "$tag" ]]; then
         log_step "$(t mh.fetching_latest)"
-        tag=$(curl -fsSL "https://api.github.com/repos/MetaCubeX/mihomo/releases/latest" 2>/dev/null \
-              | jq -r '.tag_name // empty' || true)
+        tag=$(gh_latest_tag MetaCubeX/mihomo)
         [[ "$tag" =~ ^v[0-9] ]] || { log_warn "$(t mh.latest_fallback "$MH_STABLE_FALLBACK")"; tag="$MH_STABLE_FALLBACK"; }
     fi
 
@@ -115,14 +114,8 @@ Documentation=https://wiki.metacubex.one
 After=network.target nss-lookup.target network-online.target
 
 [Service]
-User=${PSM_CORE_USER}
-Group=${PSM_CORE_USER}
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
-AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
-NoNewPrivileges=true
 EnvironmentFile=-${MH_ENV}
-# '+' runs this as root: it keeps what psm-core must read readable (lib/coreperm.sh)
-ExecStartPre=+/bin/bash ${LIB_DIR}/coreperm.sh mihomo
+$(psm_core_unit_lines mihomo)
 ExecStart=${MH_BIN} -d ${MH_CFG_DIR} -f ${MH_CFG}
 Restart=on-failure
 RestartSec=5s

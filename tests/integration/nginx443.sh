@@ -53,7 +53,7 @@ chk "mh_install"   bash -c "source lib/mihomo/core.sh; mh_install <<< \$'n\n0\n0
 add() {
     local core="$1" proto="$2" tag="$3"; shift 3
     local out; out=$(psm node add "$core" "$proto" --tag "$tag" "$@" --json 2>&1)
-    jq -e '.status == "created"' <<<"$(echo "$out" | sed -n '/^{/,$p')" >/dev/null 2>&1 && ok "add $core/$proto $tag" \
+    grep -qE '"status": ?"created"' <<<"$out" && ok "add $core/$proto $tag" \
         || { bad "add $core/$proto $tag"; echo "$out" | grep -vE '^\s*$' | tail -4 | sed 's/^/       /'; }
 }
 # One REALITY node per core on the shared 443, each behind its own SNI — mounted

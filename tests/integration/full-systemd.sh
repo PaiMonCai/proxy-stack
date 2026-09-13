@@ -13,7 +13,7 @@ NODES=()
 add() {   # add <core> <proto> <tag> <args...>
     local core="$1" proto="$2" tag="$3"; shift 3
     local out; out=$(psm node add "$core" "$proto" --tag "$tag" "$@" --json 2>&1)
-    if jq -e '.status == "created"' <<<"$(echo "$out" | sed -n '/^{/,$p')" >/dev/null 2>&1; then
+    if grep -qE '"status": ?"created"' <<<"$out"; then
         ok "add $core/$proto $tag"; NODES+=("$core $proto $tag")
     else
         bad "add $core/$proto $tag"; echo "$out" | grep -vE '^\s*$|Penetrates|anti-censorship' | tail -4 | sed 's/^/       /'
@@ -135,7 +135,7 @@ for a in "sing-box vless g1 --port 24001 ${C[*]} --vless-enc x25519" \
          "xray hysteria2 g5 --port 24005 ${C[*]} --obfs-pass abc"; do
     read -r c p t rest <<<"$a"
     out=$(psm node add $c $p --tag $t $rest --json 2>&1)
-    jq -e '.status == "created"' <<<"$(echo "$out" | sed -n '/^{/,$p')" >/dev/null 2>&1 && bad "guard $c/$p $t accepted" || ok "guard $c/$p $t refused"
+    grep -qE '"status": ?"created"' <<<"$out" && bad "guard $c/$p $t accepted" || ok "guard $c/$p $t refused"
 done
 
 sec "timers / periodic jobs"
@@ -151,6 +151,14 @@ chk "full backup"        bash -c "timeout 300 bash manager.sh --backup-full && l
 chk "doctor --json"      bash -c "bash manager.sh doctor --json | jq -e '.checks | length > 0'"
 bash manager.sh doctor --json 2>/dev/null | jq -r '.checks[] | select(.category=="core") | "       \(.id) \(.status)"'
 chk "nginx install"      bash -c "source lib/nginx.sh; nginx_install </dev/null && nginx -t && systemctl is-active --quiet nginx"
+
+sec "systemd older than 231 (Amazon Linux 2): the cores stay root"
+U=/etc/systemd/system/sing-box.service
+chk "unit written as root, no ExecStartPre=+" bash -c "PSM_SYSTEMD_VERSION=219 bash -c 'source lib/singbox/core.sh; _sb_write_service' && grep -q '^User=root' $U && ! grep -q '^ExecStartPre=+' $U"
+chk "sing-box runs as root from it" bash -c "systemctl daemon-reload; systemctl restart sing-box; sleep 2; p=\$(systemctl show -p MainPID --value sing-box); u=\$(stat -c %U /proc/\$p 2>/dev/null); echo \"state=\$(systemctl is-active sing-box) user=\$u\"; journalctl -u sing-box -n 4 --no-pager 2>/dev/null; [[ \$u == root ]] && systemctl is-active --quiet sing-box"
+chk "a restart through PSM leaves it root" bash -c "PSM_SYSTEMD_VERSION=219 bash -c 'source lib/singbox/core.sh; sb_test_restart' >/dev/null 2>&1; grep -q '^User=root' $U"
+chk "doctor says why (skipped, not fixable)" bash -c "PSM_SYSTEMD_VERSION=219 bash manager.sh doctor --json | jq -e '.checks[] | select(.id == \"core.singbox.user\") | .status == \"skipped\" and (.fixable | not)'"
+chk "current systemd: back to psm-core" bash -c "bash -c 'source lib/singbox/core.sh; sb_test_restart' >/dev/null 2>&1; grep -q '^User=psm-core' $U && systemctl is-active --quiet sing-box"
 
 sec "test suites"
 chk "tests/run.sh"       bash tests/run.sh

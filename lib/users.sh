@@ -203,7 +203,8 @@ psm_users_inject() {
     tmp=$(mktemp)
     if jq --argjson users "$users" --argjson owners "$owners" "$_USERS_JQ_DEFS $filter" "$cfg" > "$tmp" 2>/dev/null \
         && [[ -s "$tmp" ]]; then
-        cmp -s "$tmp" "$cfg" || cat "$tmp" > "$cfg"   # cat keeps the file's owner and mode
+        # unchanged: leave it; changed: cat keeps the file's owner and mode
+        [[ "$(cksum < "$tmp")" == "$(cksum < "$cfg")" ]] || cat "$tmp" > "$cfg"
     fi
     rm -f "$tmp"
     return 0
@@ -440,7 +441,7 @@ _users_cmd_list() {
                 (if .expires_at == null then "never" else (.expires_at | strftime("%Y-%m-%d")) end),
                 ((.used_bytes // 0 | gib) + "/" + (.quota_bytes | gib)),
                 (.nodes | join(","))])
-        | @tsv' <<<"$all" | column -t -s $'\t' 2>/dev/null || true
+        | @tsv' <<<"$all" | psm_table
 }
 
 _users_cmd_show() {

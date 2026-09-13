@@ -79,6 +79,16 @@ jobs:
           - { os: alpine, suite: snell }
           - { os: debian, suite: users }
           - { os: alpine, suite: users }
+          - { os: rocky9, suite: full }
+          - { os: rocky9, suite: e2e }
+          - { os: rocky9, suite: nginx443 }
+          - { os: rocky9, suite: users }
+          - { os: alma8,  suite: full }
+          - { os: alma8,  suite: e2e }
+          - { os: ubuntu24, suite: full }
+          - { os: ubuntu24, suite: e2e }
+          - { os: ubuntu22, suite: full }
+          - { os: ubuntu22, suite: e2e }
     steps:
       - uses: actions/checkout@v4
       - name: tests/integration/container.sh ${{ matrix.os }} ${{ matrix.suite }}
@@ -96,6 +106,7 @@ jobs:
         include:
           - { src: debian, dst: alpine, mode: push }
           - { src: alpine, dst: debian, mode: file }
+          - { src: debian, dst: rocky9, mode: push }
     steps:
       - uses: actions/checkout@v4
       - name: tests/integration/migrate.sh ${{ matrix.src }} ${{ matrix.dst }} ${{ matrix.mode }}

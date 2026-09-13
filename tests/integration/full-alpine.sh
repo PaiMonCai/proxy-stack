@@ -11,7 +11,7 @@ psm() { bash manager.sh "$@"; }
 add() {
     local core="$1" proto="$2" tag="$3"; shift 3
     local out; out=$(psm node add "$core" "$proto" --tag "$tag" "$@" --json 2>&1)
-    if jq -e '.status == "created"' <<<"$(echo "$out" | sed -n '/^{/,$p')" >/dev/null 2>&1; then ok "add $core/$proto $tag"
+    if grep -qE '"status": ?"created"' <<<"$out"; then ok "add $core/$proto $tag"
     else bad "add $core/$proto $tag"; echo "$out" | grep -vE '^\s*$' | tail -4 | sed 's/^/       /'; fi
 }
 alive() {   # OpenRC service really running (supervised child present)

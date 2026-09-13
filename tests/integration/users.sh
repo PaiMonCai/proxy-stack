@@ -15,7 +15,7 @@ psm() { bash manager.sh "$@"; }
 add() {
     local core="$1" proto="$2" tag="$3"; shift 3
     local out; out=$(psm node add "$core" "$proto" --tag "$tag" "$@" --json 2>&1)
-    if jq -e '.status == "created"' <<<"$(echo "$out" | sed -n '/^{/,$p')" >/dev/null 2>&1; then
+    if grep -qE '"status": ?"created"' <<<"$out"; then
         ok "add $core/$proto $tag"; ADDED+=("$tag")
     else
         bad "add $core/$proto $tag"; echo "$out" | grep -vE '^\s*$' | tail -4 | sed 's/^/       /'
@@ -112,6 +112,7 @@ chk "user add bob (u-sr, u-mt; 30 days)"        psm user add bob --nodes u-sr,u-
 chk "duplicate name refused"                    bash -c "! bash manager.sh user add alice"
 chk "invalid name refused"                      bash -c "! bash manager.sh user add 'Bad Name'"
 chk "list --json: two active users"             bash -c "bash manager.sh user list --json | jq -e '.users | length == 2 and all(.state == \"active\")'"
+chk "list (table) shows both users"             bash -c "out=\$(bash manager.sh user list); grep -q '^alice ' <<<\"\$out\" && grep -q '^bob ' <<<\"\$out\""
 chk "list --json redacts credentials"           bash -c "bash manager.sh user list --json | jq -e 'all(.users[]; .password == \"***\" and .uuid == \"***\")'"
 chk "Xray: alice on its 6 inbounds (email)"     bash -c "[[ \$(jq '[.inbounds[] | select(any(.settings.clients[]?; .email == \"psmu-alice@psm\") or any(.settings.accounts[]?; .user == \"psmu-alice\"))] | length' $X) == 6 ]]"
 chk "Xray: per-user counters switched on"       jq -e '.policy.levels."0".statsUserUplink == true' $X

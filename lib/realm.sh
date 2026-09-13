@@ -132,8 +132,7 @@ realm_install() {
 
     local tag
     log_step "$(t realm.fetching_latest)"
-    tag=$(curl -fsSL "https://api.github.com/repos/zhboner/realm/releases/latest" 2>/dev/null \
-          | jq -r '.tag_name // empty' || true)
+    tag=$(gh_latest_tag zhboner/realm)
     [[ "$tag" =~ ^v[0-9] ]] || { log_warn "$(t realm.latest_fallback "$REALM_FALLBACK_TAG")"; tag="$REALM_FALLBACK_TAG"; }
 
     local file="realm-${realm_arch}.tar.gz"

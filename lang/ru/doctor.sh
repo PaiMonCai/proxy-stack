@@ -49,3 +49,6 @@ MSG[doctor.msg.boot_disabled]="%s не запускается при загру�
 MSG[doctor.msg.hop_none]="Нет узлов с перескоком портов"
 MSG[doctor.msg.hop_ok]="Правила перенаправления всех узлов с перескоком портов (%s) на месте"
 MSG[doctor.msg.hop_missing]="Нет правил перескока портов: они есть у %s из %s узлов (не восстановлены после перезагрузки?)"
+MSG[doctor.msg.core_root_old_systemd]="%s работает от root: systemd здесь старше 231 и не может запустить ядро без привилегий"
+MSG[doctor.msg.jq_ok]="Версия jq %s"
+MSG[doctor.msg.jq_old]="jq %s считает -e на пустом вводе истиной; PSM нужен 1.7 или новее"

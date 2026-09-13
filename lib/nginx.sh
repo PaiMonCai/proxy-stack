@@ -38,6 +38,7 @@ nginx_install() {
             # nginx + nginx-mod-stream live in AppStream on EL8/9 (and in the
             # base repos on AL2023/Fedora) — EPEL is normally NOT needed. Fall
             # back to enabling EPEL only if the base install fails (older CentOS).
+            _nginx_el8_newest_stream
             pkg_install nginx 2>/dev/null \
                 || { ensure_epel || true; pkg_install nginx 2>/dev/null || true; }
             is_installed nginx || die "$(t nginx.install_fail_sources)"
@@ -297,8 +298,34 @@ SNI_DEFAULT_BLACKHOLE='default     "";'
 # isn't available afterwards — so callers can warn instead of writing a
 # `stream {}` block that would break all of nginx. Does NOT restart nginx here;
 # the caller reloads once, after the config is written and tested.
+# EL8's default nginx module stream (1.14) is built without the stream
+# ssl_preread module, which the shared-443 SNI routing needs; the newer streams
+# (1.16 … 1.24) have it. Only EL8 has module streams for nginx.
+_nginx_el8() {
+    detect_os
+    [[ "$PKG_MGR" == yum ]] && command -v dnf >/dev/null 2>&1 && [[ "$(rpm -E %rhel 2>/dev/null)" == 8 ]]
+}
+
+_nginx_el8_newest_stream() {
+    _nginx_el8 || return 0
+    local newest
+    newest=$(dnf -q module list nginx 2>/dev/null \
+        | awk '$1 == "nginx" && $2 ~ /^[0-9]+\.[0-9]+$/ {print $2}' | sort -V | tail -1)
+    [[ -n "$newest" ]] || return 0
+    dnf -y -q module reset nginx >/dev/null 2>&1 || true
+    dnf -y -q module enable "nginx:${newest}" >/dev/null 2>&1 || return 0
+    if is_installed nginx; then dnf -y -q distro-sync nginx nginx-mod-stream >/dev/null 2>&1 || true; fi
+    log_info "$(t nginx.el8_stream "$newest")"
+}
+
+_nginx_el8_fix_preread() {
+    _nginx_el8 || return 0
+    nginx -V 2>&1 | grep -q -- 'stream_ssl_preread_module' && return 0
+    _nginx_el8_newest_stream
+}
+
 _nginx_ensure_stream_module() {
-    _nginx_stream_module_available && return 0
+    _nginx_stream_module_available && { _nginx_el8_fix_preread; return 0; }
     detect_os
     log_step "$(t nginx.stream.installing)"
     case "$OS_ID" in

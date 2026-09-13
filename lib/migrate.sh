@@ -203,6 +203,7 @@ _mig_base() {
     pkg_update >/dev/null 2>&1 || true
     ensure_alpine_base || true
     ensure_pkg_deps curl wget unzip jq openssl socat qrencode tar || true
+    ensure_modern_jq || true
     mkdir -p "$CFG_DIR" "$BAK_DIR" "$LOG_DIR" "$NGINX_SSL_DIR" /usr/local/share/xray /var/log/xray
     chmod +x "$PSM_ROOT/manager.sh" 2>/dev/null || true
     ln -sf "$PSM_ROOT/manager.sh" /usr/local/bin/psm

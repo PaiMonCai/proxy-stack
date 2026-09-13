@@ -83,8 +83,7 @@ _xray_resolve_tag() {
     fi
 
     log_step "$(t xray.fetching_latest)"
-    tag=$(curl -fsSL "https://api.github.com/repos/XTLS/Xray-core/releases/latest" 2>/dev/null \
-          | jq -r '.tag_name // empty' || true)
+    tag=$(gh_latest_tag XTLS/Xray-core)
     [[ "$tag" =~ ^v[0-9] ]] || { log_warn "$(t xray.latest_fallback "$XRAY_STABLE_FALLBACK")"; tag="$XRAY_STABLE_FALLBACK"; }
     printf '%s' "$tag"
 }
@@ -272,13 +271,7 @@ Documentation=https://github.com/xtls
 After=network.target nss-lookup.target
 
 [Service]
-User=${PSM_CORE_USER}
-Group=${PSM_CORE_USER}
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
-AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
-NoNewPrivileges=true
-# '+' runs this as root: it keeps what psm-core must read readable (lib/coreperm.sh)
-ExecStartPre=+/bin/bash ${LIB_DIR}/coreperm.sh xray
+$(psm_core_unit_lines xray)
 ExecStart=${XRAY_BIN} run -config ${XRAY_CFG}
 Restart=on-failure
 RestartSec=5s

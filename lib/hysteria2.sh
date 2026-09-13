@@ -34,8 +34,7 @@ hy2_install() {
     local tag
 
     log_step "$(t hysteria2.fetching_latest)"
-    tag=$(curl -fsSL "https://api.github.com/repos/apernet/hysteria/releases/latest" 2>/dev/null \
-          | jq -r '.tag_name // empty' || true)
+    tag=$(gh_latest_tag apernet/hysteria)
     [[ "$tag" =~ ^app/v[0-9] ]] || { log_warn "$(t hysteria2.latest_fallback)"; tag="app/v2.6.0"; }
 
     local hy2_arch

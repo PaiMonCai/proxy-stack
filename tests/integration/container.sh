@@ -2,11 +2,12 @@
 # Runs one integration suite in a disposable container, the same way on a test
 # box and in GitHub Actions:
 #
-#   tests/integration/container.sh debian|alpine|rocky9|alma8 full|nginx443|e2e|users|snell
+#   tests/integration/container.sh debian|ubuntu24|ubuntu22|alpine|rocky9|alma8 full|nginx443|e2e|users|snell
 #
-# One OS per supported family: Debian 13, Alpine 3.22 (OpenRC, musl), and the
-# Red Hat family as Rocky Linux 9 and AlmaLinux 8 (dnf, EPEL, jq 1.6; Alma 8
-# for systemd 239 and Nginx 1.14). The systemd ones run systemd as PID 1, so
+# The three supported families: Debian 13 and Ubuntu 24.04 / 22.04 (22.04 for
+# jq 1.6 and Nginx 1.18), Alpine 3.22 (OpenRC, musl), and the Red Hat family as
+# Rocky Linux 9 and AlmaLinux 8 (dnf, EPEL, jq 1.6; Alma 8 for systemd 239 and
+# Nginx 1.14). The systemd ones run systemd as PID 1, so
 # both service layers are exercised for real. The containers are privileged:
 # the suites install services, firewall rules and (Snell on Alpine) Docker.
 # A suite is tests/integration/<suite>-<os>.sh when that exists, else
@@ -29,14 +30,18 @@ _it_run_systemd() {   # <container name> <image>: boot systemd as PID 1, wait fo
 
 it_init() { case "$1" in alpine) echo openrc ;; *) echo systemd ;; esac; }
 
-it_start() {   # it_start <debian|alpine|rocky9|alma8> <container name>
+it_start() {   # it_start <debian|ubuntu24|ubuntu22|alpine|rocky9|alma8> <container name>
     local os="$1" name="$2" image base
     case "$os" in
-        debian)
-            image=psm-it-debian13-systemd
+        debian|ubuntu24|ubuntu22)
+            case "$os" in
+                debian)   base=debian:13;   image=psm-it-debian13-systemd ;;
+                ubuntu24) base=ubuntu:24.04; image=psm-it-ubuntu24-systemd:1 ;;
+                ubuntu22) base=ubuntu:22.04; image=psm-it-ubuntu22-systemd:1 ;;
+            esac
             if ! docker image inspect "$image" >/dev/null 2>&1; then
-                docker build -q -t "$image" - >/dev/null <<'EOF'
-FROM debian:13
+                docker build -q -t "$image" - >/dev/null <<EOF
+FROM ${base}
 RUN apt-get update -qq \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq systemd systemd-sysv dbus \
       curl jq unzip openssl ca-certificates iproute2 procps cron git file \
@@ -70,7 +75,7 @@ EOF
                 && mkdir -p /run/openrc && touch /run/openrc/softlevel \
                 && { openrc default >/dev/null 2>&1 || true; }'
             ;;
-        *) echo "unknown os: $os (debian|alpine|rocky9|alma8)" >&2; return 2 ;;
+        *) echo "unknown os: $os (debian|ubuntu24|ubuntu22|alpine|rocky9|alma8)" >&2; return 2 ;;
     esac
 }
 
@@ -83,8 +88,8 @@ it_copy_tree() {   # it_copy_tree <container>: this checkout, without state, int
 
 set -euo pipefail
 
-os="${1:?usage: $0 debian|alpine|rocky9|alma8 SUITE}"
-suite="${2:?usage: $0 debian|alpine|rocky9|alma8 SUITE}"
+os="${1:?usage: $0 debian|ubuntu24|ubuntu22|alpine|rocky9|alma8 SUITE}"
+suite="${2:?usage: $0 debian|ubuntu24|ubuntu22|alpine|rocky9|alma8 SUITE}"
 script="tests/integration/${suite}-${os}.sh"
 [[ -f "$root/$script" ]] || script="tests/integration/${suite}-$(it_init "$os").sh"
 [[ -f "$root/$script" ]] || script="tests/integration/${suite}.sh"

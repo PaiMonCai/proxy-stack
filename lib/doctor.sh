@@ -124,6 +124,19 @@ _doctor_check_commands() {
     done
 }
 
+# jq 1.6 treats `jq -e` on empty input as true (see ensure_modern_jq)
+_doctor_check_jq_version() {
+    command -v jq &>/dev/null || return 0
+    local v; v=$(jq --version 2>/dev/null)
+    if _jq_is_modern; then
+        _doctor_add "dependency.jq_version" "dependency" "ok" "$(t doctor.msg.jq_ok "$v")" \
+            "$(_doctor_details version "$v")"
+    else
+        _doctor_add "dependency.jq_version" "dependency" "warning" "$(t doctor.msg.jq_old "$v")" \
+            "$(_doctor_details version "$v")" "_doctor_fix_jq"
+    fi
+}
+
 _doctor_json_valid() {
     local file="$1"
     if command -v jq &>/dev/null; then
@@ -286,6 +299,12 @@ _doctor_check_core_extra() {
             "$(_doctor_details service "$service" enabled "false")" "_doctor_fix_boot $service"
     fi
     case "$id" in xray|singbox|mihomo) ;; *) return 0 ;; esac
+    source "$LIB_DIR/coreperm.sh"
+    if ! psm_core_nonroot_supported; then
+        _doctor_add "core.${id}.user" "core" "skipped" "$(t doctor.msg.core_root_old_systemd "$label")" \
+            "$(_doctor_details service "$service" user "root" reason "systemd<231")"
+        return 0
+    fi
     if _uses_systemd; then
         def="/etc/systemd/system/${service}.service"
         pid=$(systemctl show -p MainPID --value "$service" 2>/dev/null || true)
@@ -421,6 +440,8 @@ _doctor_fix_core() {
     return 1
 }
 
+_doctor_fix_jq() { ensure_modern_jq && _jq_is_modern; }
+
 _doctor_fix_boot() { svc_enable "$1" && svc_is_enabled "$1"; }
 
 _doctor_fix_hop() { source "$LIB_DIR/hop.sh" && psm_hop_sync; }
@@ -482,6 +503,7 @@ _doctor_collect() {
     _doctor_reset
     _doctor_check_system
     _doctor_check_commands
+    _doctor_check_jq_version
     _doctor_check_configs
     _doctor_check_cores
     _doctor_check_disk

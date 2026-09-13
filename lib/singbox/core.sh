@@ -18,7 +18,7 @@ SB_RELEASES="https://github.com/SagerNet/sing-box/releases"
 # 稳定版 = /releases/latest；预览版 = /releases 里最新的 prerelease。
 # 预览通道存在的理由：部分入站只在尚未转正的分支里（如 Snell 需 1.14+，而 1.14
 # 目前仍是 beta），没有这个通道那些协议在稳定版上永远不可达。默认仍走稳定版。
-SB_STABLE_FALLBACK="v1.13.19"   # API 不可达时的兜底，必须是真实存在的稳定 tag
+SB_STABLE_FALLBACK="v1.14.0"   # API 不可达时的兜底，必须是真实存在的稳定 tag
 
 _sb_choose_channel() {
     # 非交互场景（管道 / 自动化）不提问，直接走稳定版
@@ -49,8 +49,7 @@ _sb_resolve_tag() {
     fi
 
     log_step "$(t sb.fetching_latest)"
-    tag=$(curl -fsSL "https://api.github.com/repos/SagerNet/sing-box/releases/latest" 2>/dev/null \
-          | jq -r '.tag_name // empty' || true)
+    tag=$(gh_latest_tag SagerNet/sing-box)
     [[ "$tag" =~ ^v[0-9] ]] || { log_warn "$(t sb.latest_fallback "$SB_STABLE_FALLBACK")"; tag="$SB_STABLE_FALLBACK"; }
     printf '%s' "$tag"
 }
@@ -181,13 +180,7 @@ Documentation=https://sing-box.sagernet.org
 After=network.target nss-lookup.target network-online.target
 
 [Service]
-User=${PSM_CORE_USER}
-Group=${PSM_CORE_USER}
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
-AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
-NoNewPrivileges=true
-# '+' runs this as root: it keeps what psm-core must read readable (lib/coreperm.sh)
-ExecStartPre=+/bin/bash ${LIB_DIR}/coreperm.sh sing-box
+$(psm_core_unit_lines sing-box)
 ExecStart=${SB_BIN} run -c ${SB_CFG}
 ExecReload=/bin/kill -HUP \$MAINPID
 Restart=on-failure

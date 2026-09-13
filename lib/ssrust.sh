@@ -65,8 +65,7 @@ _ssrust_native_install() {
         arm32) triple="armv7-unknown-linux-musleabihf" ;;
     esac
     local tag
-    tag=$(curl -fsSL --max-time 15 "https://api.github.com/repos/shadowsocks/shadowsocks-rust/releases/latest" 2>/dev/null \
-          | jq -r '.tag_name // empty' 2>/dev/null) || true
+    tag=$(gh_latest_tag shadowsocks/shadowsocks-rust)
     [[ "$tag" =~ ^v[0-9] ]] || tag="$SS_NATIVE_FALLBACK"
     log_step "$(t common.native.installing ss-rust "$tag")"
 

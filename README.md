@@ -134,6 +134,8 @@ bash /opt/psm/install.sh
 
 > 未在此列表内、或版本更低的系统（如 CentOS 7、Debian 9、Ubuntu 18.04 及更早）未做适配和测试，不保证可用。
 
+> 实际测试覆盖：每次提交都在测试 VPS 的容器里对 **Debian 13、Ubuntu 24.04 / 22.04、Alpine 3.22、Rocky Linux 9、AlmaLinux 8** 跑完整测试。表中其余发行版使用同一套代码，但未逐一测试。RHEL 系上的 SELinux 未测试（容器内无法启用）。Amazon Linux 2 的 systemd（219）过旧，无法以非 root 用户启动内核，内核会以 root 运行（`psm doctor` 会说明原因）。EL8 上 PSM 会把 Nginx 切到较新的模块流（1.24），因为自带的 1.14 不支持共享 443 所需的 SNI 分流。
+
 > Alpine 使用 `apk` 与 OpenRC。全新的 Alpine 没有 bash，可直接执行 `wget -qO- https://psm.jinqians.com | sh`（会先用 apk 装好 bash 再继续），或先 `apk add --no-cache bash curl` 再用上面的安装命令。安装时会自动补齐 GNU 基础工具（coreutils、grep、procps、iproute2、tzdata 等），并用 cronie 取代只认 `/etc/crontabs` 的 busybox crond。Xray、sing-box（自动下载 musl 版）、mihomo、Hysteria2、realm、ss-rust、Telegram Bot 和 VPNGate 隧道会生成 OpenRC 服务并开机自启，日志在 `/var/log/psm/<服务名>.log`；流量统计、规则集更新、Reality 看门狗、健康日报等定时任务改由 cron 执行。独立版 Snell 例外：官方 snell-server 在 musl 上无法运行（已实测，装 gcompat 也不行），所以在 Alpine 上 PSM 会（按需先装 Docker）用上游官方镜像 `jinqians/snell-server` 运行它，配置、端口、防火墙与流量统计和 Debian 上完全一致；也可以改用 sing-box（v5/v6）或 mihomo（v4/v5）的 Snell 节点。
 
 | 项目     | 要求                                                                 |
