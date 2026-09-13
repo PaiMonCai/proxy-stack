@@ -1,425 +1,101 @@
 <div align="center">
 
-# JQ's Proxy Stack Manager
+<img src=".github/assets/banner.png" alt="PSM: your own proxy server on a VPS, in one command" width="820">
 
-**All-in-one Linux proxy server manager · Xray / sing-box / mihomo triple cores**
+# PSM · Proxy Stack Manager
+
+**Your own proxy server on a VPS, in one command: VLESS REALITY, Hysteria2, TUIC, AnyTLS**<br>
+Xray / sing-box / mihomo · port 443 sharing · per-user accounts · traffic quotas · server migration
 
 <p>
-  <img src="https://img.shields.io/badge/Platform-Linux-1793D1?logo=linux&logoColor=white" alt="Platform">
-  <img src="https://img.shields.io/badge/Shell-Bash-4EAA25?logo=gnubash&logoColor=white" alt="Bash">
-  <img src="https://img.shields.io/badge/Arch-x86__64%20%C2%B7%20arm64-FF8C00" alt="Arch">
-  <img src="https://img.shields.io/badge/License-AGPL--3.0-blue" alt="License">
-  <img src="https://img.shields.io/github/stars/jinqians/proxy-stack?style=flat&logo=github&color=yellow" alt="Stars">
   <a href="https://github.com/jinqians/proxy-stack/actions/workflows/ci.yml"><img src="https://github.com/jinqians/proxy-stack/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
+  <img src="https://img.shields.io/badge/License-AGPL--3.0-blue" alt="License">
+  <img src="https://img.shields.io/badge/Debian%20·%20Ubuntu%20·%20Alpine%20·%20RHEL-supported-1793D1?logo=linux&logoColor=white" alt="Systems">
+  <img src="https://img.shields.io/github/stars/jinqians/proxy-stack?style=flat&logo=github&color=yellow" alt="Stars">
 </p>
 
 <p>
-  <a href="README.md">简体中文</a> ·
-  <b>English</b> ·
-  <a href="README_KO.md">한국어</a> ·
-  <a href="README_RU.md">Русский</a>
+  <a href="https://psm-docs.pages.dev/en/"><b>📖 Documentation</b></a> ·
+  <a href="https://psm-docs.pages.dev/en/guide/quick-start">Quick start</a> ·
+  <a href="https://psm-docs.pages.dev/en/faq">FAQ</a> ·
+  <a href="README.md">简体中文</a>
 </p>
 
 </div>
 
-```
-       _    ___          ____    ____    __  __
-      | |  / _ \        |  _ \  / ___| |  \/  |
-   _  | | | | | |       | |_) | \___ \ | |\/| |
-  | |_| | | |_| |       |  __/   ___) | | |  | |
-   \___/   \__\_|       |_|     |____/ |_|  |_|
+## Install
 
-  Proxy Stack Manager  ·····  ◆ jinqians.com
-  ──────────────────────────────────────────
-  IP    ▶  x.x.x.x              Nginx     ▶  1.x.x
-  Xray  ▶  x.x.x                Hysteria2 ▶  2.x.x
-  Sing-box ▶  x.x.x             Mihomo    ▶  v1.x.x
-  ──────────────────────────────────────────
-```
-
----
-
-## Introduction
-
-**Proxy Stack Manager (PSM)** is an all-in-one Bash-based management tool for Linux proxy servers. The `psm` command lets you install VLESS Reality / Vision / XHTTP, Shadowsocks, Hysteria2, Snell, and AnyTLS with a single command, powered by **Xray, sing-box, and mihomo (Clash.Meta) triple cores**, and centrally manage Nginx, SSL certificates, realm relay forwarding, per-node traffic monitoring with Telegram Bot notifications, VPS security hardening, Docker apps, and Cloudflare services.
-
-Every node automatically generates its own key pair and can export share links and QR codes, with Clash Meta / Shadowrocket / Surge config export supported. Certificates are issued and renewed automatically via acme.sh — no manual steps required. Multiple protocol nodes can also share the same public port 443 (see below).
-
-The interface is available in **four languages — 简体中文 / English / 한국어 / Русский** — chosen at install time and switchable any time from the main menu.
-
-### Why PSM
-
-- **One command to enter the full management menu** — after installation, just run `psm`
-- **Triple cores** — Xray, sing-box, and mihomo are managed side by side: protocol inbounds, routing rules, and outbounds are configured independently per core without interfering
-- **Multi-protocol management** — Reality / Vision / XHTTP / Hysteria2 / TUIC / WireGuard / Snell / SS2022 / AnyTLS can coexist under one workflow, no per-protocol scripts to maintain
-- **Designed for long-lived VPS instances** — not a one-off installer, but a tool that keeps update, backup, restore, service status, and hardening in one place
-- **Four-language interface** — switch between Chinese / English / Korean / Russian any time; `PSM_LANG=en psm` overrides per session
-- **Transparent and auditable** — the project is Bash-based, installs under `/opt/psm`, and documents its system write paths
-
----
-
-## 443 Port Reuse
-
-Multiple protocol nodes can share the same public port 443 for external access — no need to open a separate port for every protocol or domain. This works via Nginx's `stream`-layer `ssl_preread`: it reads the SNI (the domain the client is trying to reach) straight out of the TLS ClientHello without decrypting the traffic, then routes the connection to the matching backend by domain.
-
-```mermaid
-flowchart TD
-    A(["Client connects on 443/TCP"]) --> B["Nginx stream layer<br/>ssl_preread reads SNI (no decryption)"]
-
-    B -->|"SNI = a.example.com"| C1["Reality node 1<br/>127.0.0.1:1443"]
-    B -->|"SNI = b.example.com"| C2["Reality node 2<br/>127.0.0.1:1444"]
-    B -->|"SNI = c.example.com"| D["Vision node<br/>127.0.0.1:1445"]
-    B -->|"SNI = d.example.com"| E["XHTTP node<br/>127.0.0.1:1446"]
-    B -->|"SNI = e.example.com (your own domain)"| F["HTTPS decoy site<br/>127.0.0.1:8443"]
-    B -->|"SNI matches no entry"| X["Connection dropped<br/>no upstream connection opened"]
-
-    G(["Client connects on 443/UDP"]) --> H["Hysteria2<br/>independent QUIC listener, no conflict"]
-```
-
-Benefits:
-
-- **Only one port exposed externally** — the firewall only needs to allow 443, shrinking the scannable attack surface
-- **Unknown SNI is dropped** — the routing table only knows domains that were explicitly mounted, so a scanner putting an arbitrary SNI on the wire is disconnected without any upstream connection being opened. That blackhole also closes the path to using your server as a free relay (see the FAQ entry on CDN-fronted decoy targets)
-- **Multiple identities on one machine** — different protocol nodes, plus the decoy site shown to GFW probing, can all live on 443 at once, distinguished purely by domain name
-- **Multiple tenants per node** — no need to open a separate port/key pair per user; multiple UUIDs under the same SNI share one entry point, with traffic billed independently per user
-- **UDP 443 reuse is independent** — Hysteria2 runs over UDP, a completely separate listening stack from the TCP routing above, so there's no conflict even though the port number is the same
-
-> **Unified across cores**: Xray's Reality / Vision / XHTTP plus sing-box and mihomo Reality / AnyTLS nodes can all mount on the same 443, sharing this one SNI routing table; reusing the same camouflage domain across cores is automatically detected and blocked to prevent routing conflicts.
-
----
-
-## How to Use
-
-### One-line install
-
-Run as root on your VPS. This installs to `/opt/psm` and registers the `psm` command:
+As root on your VPS:
 
 ```bash
-# Using curl (recommended)
 bash <(curl -fsSL https://psm.jinqians.com)
-
-# Using wget (if curl isn't installed)
-bash <(wget -qO- https://psm.jinqians.com)
 ```
 
-> Running the same command again on a fully installed machine performs a `git pull` update. If a half-installed state left over from an old uninstall is detected, the installer re-runs automatically to repair it.
+Then run `psm` to open the menu. On Alpine: `wget -qO- https://psm.jinqians.com | sh`.
 
-After installation, type at any time:
+<p align="center">
+  <img src=".github/assets/menu.en.png" alt="PSM main menu" width="720">
+</p>
+
+## What it does
+
+| | |
+| --- | --- |
+| 🛡️ **Censorship-resistant protocols** | VLESS REALITY / Vision / XHTTP, Hysteria2 with port hopping, TUIC v5, AnyTLS, Snell, Shadowsocks 2022, Trojan, VMess, WireGuard |
+| 🧩 **Three cores** | Xray, sing-box and mihomo, side by side if you like; [which to pick](https://psm-docs.pages.dev/en/guide/cores) |
+| 🔒 **Share port 443** | many nodes on one port 443, unknown names dropped; [how](https://psm-docs.pages.dev/en/features/port-443) |
+| 📱 **Links, QR codes, subscriptions** | for v2rayN, Clash Verge Rev, Shadowrocket, sing-box and other clients |
+| 👥 **Per-user accounts** | own credentials, expiry and subscription per person, monthly quotas; [how](https://psm-docs.pages.dev/en/features/users) |
+| 🎬 **Unlock Netflix / ChatGPT** | WARP and residential exits, routed by rule set |
+| 📦 **Move servers** | `psm migrate push root@new-server`, clients keep working |
+| 🩺 **Diagnose and repair** | `psm doctor --fix` fixes services, certificates, boot start and redirect rules |
+| 🔐 **Secure** | cores run unprivileged, SSH hardening, Fail2ban, honeypots |
+
+<table>
+  <tr>
+    <td><img src=".github/assets/doctor.en.png" alt="psm doctor"></td>
+    <td><img src=".github/assets/user-list.en.png" alt="psm user"></td>
+  </tr>
+  <tr>
+    <td align="center">Diagnose and repair</td>
+    <td align="center">Per-user accounts</td>
+  </tr>
+</table>
+
+## Everyday commands
 
 ```bash
-psm
+psm                                         # open the menu
+psm node add xray reality --tag hk --port 443 \
+  --server-name TARGET --dest TARGET:443    # a REALITY node
+psm node export xray reality hk             # its share link
+psm user add alice --days 30 --quota 100G   # an account for alice
+psm doctor --fix                            # diagnose and repair
+psm migrate push root@new-server            # move to a new VPS
 ```
 
-to enter the interactive main menu.
+All commands: [CLI reference](https://psm-docs.pages.dev/en/reference/cli).
 
-### Manual install
+## Supported systems
 
-```bash
-git clone https://github.com/jinqians/proxy-stack.git /opt/psm
-bash /opt/psm/install.sh
-```
-
-### System requirements
-
-| Distribution            | Minimum supported version |
-| ----------------------- | ------------------------- |
-| Ubuntu                  | 20.04 LTS or later        |
-| Debian                  | 10 (Buster) or later      |
-| CentOS / RHEL           | 8 or later                |
-| Rocky Linux / AlmaLinux | 8 or later                |
-| Oracle Linux            | 8 or later                |
-| Amazon Linux            | 2 or later                |
-| Fedora                  | recent supported releases |
-| Alpine Linux            | 3.18 or later (see note below) |
-
-> Systems not in this list, or older versions (CentOS 7, Debian 9, Ubuntu 18.04 and earlier), are untested and not guaranteed to work.
-
-> What is actually tested: every commit runs the full test suites in containers on the test VPS against **Debian 13, Ubuntu 24.04 / 22.04, Alpine 3.22, Rocky Linux 9 and AlmaLinux 8**. The other distributions in the table run the same code but are not tested one by one. SELinux on the Red Hat family is untested (it cannot be enabled inside a container). Amazon Linux 2's systemd (219) is too old to start the cores unprivileged, so there they run as root (`psm doctor` explains why). On EL8, PSM switches Nginx to a newer module stream (1.24): the stock 1.14 lacks the SNI routing the shared 443 needs.
-
-> Alpine uses `apk` and OpenRC. A fresh Alpine has no bash: run `wget -qO- https://psm.jinqians.com | sh` (it installs bash through apk, then continues), or `apk add --no-cache bash curl` first and use the command above. The installer adds the GNU base tools PSM relies on (coreutils, grep, procps, iproute2, tzdata, …) and replaces busybox crond, which ignores `/etc/cron.d`, with cronie. Xray, sing-box (the musl build is fetched automatically), mihomo, Hysteria2, realm, ss-rust, the Telegram bot and the VPNGate tunnel run as OpenRC services that start at boot, logging to `/var/log/psm/<service>.log`; traffic accounting, rule-set updates, the Reality watchdog and the health report run from cron. Standalone Snell is the exception: the official snell-server does not run on musl (tested; gcompat does not help either), so on Alpine PSM runs it from the upstream `jinqians/snell-server` image through Docker (installing Docker first if needed), with the same config, port, firewall rule and traffic accounting as on Debian. A Snell node on sing-box (v5/v6) or mihomo (v4/v5) is the other option.
-
-| Item          | Requirement                                                            |
-| ------------- | ---------------------------------------------------------------------- |
-| Privileges    | root                                                                    |
-| Architecture  | x86_64 · arm64                                                         |
-| Base packages | `bash` · `curl` or `wget` (either one) · `git` (installed by bootstrap) |
-
-Other dependencies (`jq`, `openssl`, `qrencode`, `unzip`, `iptables`, `fail2ban`, …) are installed on demand the first time each feature module is used.
-
-### Main menu
-
-```
-══════════════════════════════════════════════════════════════
-                  JQ's Proxy Stack Manager
-══════════════════════════════════════════════════════════════
-   1. System Management        12. Relay (realm)
-   2. sing-box Management      13. Cloudflare DDNS
-   3. mihomo Core              14. Docker Management
-   4. Xray Management          15. Traffic Management
-   5. Snell Management         16. Telegram Bot
-   6. ss-rust Management       17. Backup Management
-   7. Hysteria2 Management     18. Restore Backup
-   8. Nginx Management         19. Update PSM
-   9. Website Management       20. Security Hardening
-  10. SSL Cert Management      21. 语言 / Language
-  11. View All Nodes
-──────────────────────────────────────────────────────────────
-   0. Exit
-══════════════════════════════════════════════════════════════
-```
-
-### Non-interactive mode (for cron / systemd timers)
-
-```bash
-manager.sh --ddns-update           # Run one Cloudflare DDNS update
-manager.sh --backup-full           # Run one full backup
-manager.sh --backup-quick [label]  # Run one quick backup
-manager.sh --update                # Update PSM scripts and components
-manager.sh --traffic-check         # Run one traffic accounting check
-manager.sh --tgbot                 # Start the Telegram Bot daemon
-manager.sh --reality-watchdog      # Run one Reality decoy liveness check
-manager.sh --vpngate-watchdog      # Check the VPNGate residential tunnel once, rotating nodes if it is down
-manager.sh --ruleset-update        # Refresh subscribed rule sets once (restarts Xray if its content changed)
-manager.sh --honeypot-alert <ip> <port>  # Honeypot hit alert (called by fail2ban)
-manager.sh --health-report         # Send one daily health report
-```
-
-These are the real entry points invoked by each module's scheduled tasks. The "enable scheduled task" options in the menus register them for you — no manual cron setup needed.
-
-### Diagnostics and node automation CLI
-
-```bash
-psm doctor                         # Read-only host and configuration diagnostics
-psm doctor --json                  # Structured JSON report
-psm doctor --fix                   # Repair what it finds (restart a stopped core, re-enable boot start, rebuild hop rules, renew certificates, …), then check again
-psm migrate push root@NEW-SERVER   # One-step move: nodes, keys, certificates, Nginx and acme.sh rebuilt on the new server over SSH (it only needs SSH)
-psm migrate export --encrypt       # Or write an encrypted bundle, copy it over, and run psm migrate import FILE there
-psm user add alice --days 30 --quota 100G   # Accounts: own UUID/password per user, expiry, own subscription (quota counts Xray nodes)
-psm user list / show alice / links alice / token alice / update alice --disable / delete alice
-
-psm node list --json               # List nodes from all three cores
-psm node show xray reality node-1 --json
-psm node add xray reality --tag node-1 --port 24443
-psm node update xray reality node-1 --port 25443
-psm node export xray reality node-1 --server 203.0.113.10
-psm node delete xray reality node-1 --yes
-```
-
-The node CLI covers 14 stored node types across Xray, sing-box, and mihomo, with JSON input, field-level updates, credential redaction by default, mutation locking, port-conflict checks, and rollback on apply failure. Run `psm node help` for the full option reference.
-
-### Uninstall
-
-```bash
-bash /opt/psm/uninstall.sh
-```
-
-The uninstaller removes the shortcut command, cron entries, systemd timers/services, and PSM firewall/Fail2ban rules created by PSM itself, and asks (default yes) whether to delete the `/opt/psm` program directory with its config state. Components such as Nginx, Xray, sing-box, mihomo, Hysteria2, Snell, ss-rust, acme.sh, certificates, and Docker Compose apps are confirmed one by one, so services you maintain manually are never removed by accident.
-
----
-
-## Features
-
-### Xray core
-
-- **Xray** — Reality / Vision / XHTTP / SS2022, multi-node management, automatic key pair generation, VLESS URI export (with QR code) / Clash Meta / sing-box
-- **Reality multi-target liveness switching** — configure multiple candidate SNIs for the decoy target; periodic real TLS 1.3 handshake checks switch away from dead targets automatically while old client links keep working
-- **Smart Reality decoy discovery** — when configuring a Reality / XHTTP decoy SNI, cyberspace mapping engines (Netlas / Quake / ZoomEye / FOFA, using your own API key, free tiers suffice) can discover real TLS 1.3 sites in the **same ASN / same datacenter** as your server: nearby, obscure, and free of the over-used big-brand domains. A host in your own ASN is also not a CDN edge, which sidesteps the abuse risk covered in the FAQ. Candidates are verified locally with real handshakes (TLS 1.3 / X25519 / certificate match) before being adopted, and can be batch-added to the liveness pool above. **No local port scanning at any point** (avoiding provider abuse reports) — discovery relies on the engines' datasets; without an engine configured, it falls back to manual input
-- **Cloudflare WARP outbound unlock** — register a WARP identity with one click and wire it into Xray outbounds; combined with routing rules, traffic for Netflix / OpenAI etc. is steered through WARP
-- **VPNGate residential-IP exit** — picks genuine home-broadband IPs out of the public VPNGate list (ip-api batch classification drops datacenter nodes and VPNGate's own relays), brings up a dedicated openvpn tunnel, and wires it in as an fwmark outbound: services that judge you by IP ownership (Netflix / ChatGPT ...) see a residential exit, while the box's own default route and SSH stay untouched (the tunnel only ever writes a dedicated routing table). If the tunnel drops, matching traffic fails closed instead of leaking back through the datacenter IP, and failover is automatic **within the country you picked** (chosen from a numbered list of the countries that actually have nodes), so the exit country never drifts. Xray / sing-box / mihomo share the one tunnel, so switching residential IP changes nothing in any core config
-- **Subscribed rule sets** — paste a community rule-list URL (OpenAI.list and friends), pick an exit, and the traffic it describes leaves there. Xray has no rule-set mechanism, so rules are inlined into `config.json` (domains and IPs as two separate rules — fields within one rule are ANDed, and merging them would mean the rule never fires), which also makes it the one core that needs a restart; the daily update only rebuilds and restarts when the content actually changed
-- **Outbound routing** — custom outbound nodes (VLESS-Reality / TLS / XHTTP, Shadowsocks, Trojan, SOCKS5), forwarding by domain / GeoIP / GeoSite rules to a chosen outbound
-
-### sing-box core (second core)
-
-- **A full protocol stack parallel to Xray** — VLESS Reality, SS2022, Hysteria2 (with optional port hopping), TUIC v5, AnyTLS (requires sing-box 1.12+), Snell (requires sing-box 1.14+) and a WireGuard server (standard wg-quick exports) inbounds sharing one kernel and one config file
-- **Stable and preview channels for Xray** — XTLS has marked every release since v26.3.27 as a pre-release, so the stable channel can lag months behind while preview tracks the newest build. Choosing preview warns you that from v26.4.13 REALITY refuses clients on a core older than v26.3.27 (including the cores bundled in many phone apps); the Reality menu lets you relax that per node
-- **Stable and preview release channels** — pick a kernel channel at install and upgrade time. Stable is the default; preview installs the latest beta/rc and is currently the only way to reach protocols upstream has not stabilised yet (the Snell inbound needs 1.14+, and 1.14 is still in beta). Switching back to stable while Snell nodes exist is blocked with an explanation, so the config cannot end up failing validation with the service down
-- **Routing management** — geosite / geoip / domain suffix / IP CIDR / inbound tag → chosen outbound or reject, with one-tap ad-block and QUIC-block presets
-- **Outbound manager** — 10 outbound types: ss / vless-reality / vless-tls / trojan / socks / anytls / snell / hysteria2 (Salamander obfuscation) / tuic
-- **WARP outbound** — reuses the WARP account registered on the Xray side as a WireGuard endpoint
-- **Subscribed rule sets** — paste a community rule-list URL (OpenAI.list and friends), pick an exit, and the traffic it describes leaves there. Uses the native `rule_set` path (a local source file the core reloads by itself on 1.10+), so refreshing never restarts anything. A preflight report shows usable counts and names every dropped client-only type (PROCESS-NAME and the like); updates compare rule counts and refuse wild swings pending review
-- **VPNGate residential exit** — shares the same residential tunnel as Xray; the outbound is `direct` + `routing_mark`, so rotating nodes needs no config change (sing-box 1.12+ switches to `domain_resolver` to pin IPv4)
-- **443 port reuse** — Reality and AnyTLS nodes can mount on the Nginx 443 SNI router, sharing the public 443 with Xray / mihomo nodes so clients only connect to 443; direct-listen on a dedicated port still works too
-- **Transactional config changes** — every change is preceded by an automatic backup; if `sing-box check` fails, both the config and the node store are rolled back, so a bad config can never take the service down
-
-### mihomo core (third core)
-
-- **Clash.Meta ecosystem support** — VLESS Reality, SS2022, Hysteria2 (with optional port hopping), TUIC v5, AnyTLS, and Snell v4/v5 inbounds share `/etc/mihomo/config.yaml`; ECH can be switched on for the TLS nodes
-- **Clash-style routing** — manages `proxies` / `proxy-groups` / `rules` directly, supporting DOMAIN-SUFFIX / DOMAIN-KEYWORD / GEOSITE / GEOIP / IP-CIDR / IN-NAME with a fixed `MATCH,DIRECT` fallback
-- **Outbound manager** — ss / vless-reality / vless-tls / trojan / socks5 / anytls / snell / hysteria2 / tuic / wireguard outbound types
-- **WARP outbound reuse** — reuses the WARP account registered on the Xray side and generates a mihomo wireguard proxy
-- **Subscribed rule sets** — same feature on mihomo, emitted as a native `rule-providers` entry the core refreshes on its own interval; types only mihomo understands, such as `IP-ASN`, survive the native path
-- **VPNGate residential exit** — shares the same residential tunnel as Xray, generating a `type: direct` proxy with `routing-mark` and `ip-version: ipv4`; rotating nodes needs no config change
-- **443 port reuse** — Reality and AnyTLS nodes can mount on the Nginx 443 SNI router, sharing the public 443 with Xray / sing-box nodes so clients only connect to 443; direct-listen on a dedicated port still works too
-- **Transactional config changes** — every change rebuilds the config and runs `mihomo -t -d /etc/mihomo -f /etc/mihomo/config.yaml`; failed checks roll back automatically without affecting the running old config
-
-### Standalone protocols & relay
-
-- **Hysteria2** — UDP proxy, password auth, bandwidth limits, masquerade
-- **Snell** — v4 / v5 / v6, PSK auth, Surge-format export
-- **SS 2022** — standalone shadowsocks-rust deployment, `ss://` URI export (with QR code)
-- **realm relay** — TCP / UDP port forwarding rule management (relay machine → landing machine), with relay server status reports via Telegram
-
-### Base services
-
-- **Nginx** — SNI-based multi-protocol routing, site management, HTTPS decoy sites
-- **SSL certificates** — automatic issuance via acme.sh (HTTP-01 / DNS-01 wildcard), automatic renewal
-- **Cloudflare** — dynamic DDNS updates, DNS record management, DNS-01 wildcard certificates
-- **Cloudflare Tunnel** — expose local services (Docker apps, admin panels, …) on a chosen domain without opening any port
-- **Cloudflare Access** — put an email-verification gate in front of domains exposed via Tunnel/Nginx, made for protecting admin apps like Portainer and Nginx Proxy Manager
-- **Docker** — install management, one-click app store (Portainer / Uptime Kuma / Netdata / AdGuard Home / Vaultwarden / Alist, …), pre-deploy port conflict detection, selectable exposure (localhost only / direct public / Nginx reverse proxy / Cloudflare Tunnel), data volumes included in backups
-
-### Security hardening
-
-- **SSH hardening** — one-click key-only login, password auth disabling, and port changes; every high-risk change is applied via `reload` (never killing your current session) with a 5-minute auto-rollback that reverts unless confirmed, so you can't lock yourself out
-- **Fail2ban** — automatic banning of failed SSH logins, built-in "recidive" rules imposing longer bans on repeat offenders, IP whitelist support
-- **Honeypot** — traps on ports this machine shouldn't be serving (RDP / MSSQL / Telnet, …); any connection is treated as reconnaissance, triggering a permanent ban and a Telegram alert. Port occupancy detection automatically excludes SSH, configured proxy protocols, Docker services, etc., so legitimate services are never caught
-
-### Operations & monitoring
-
-- **Traffic management** — covers nodes across all three cores (Xray / sing-box / mihomo); monthly quota per node, automatic pause at threshold with a Telegram alert, per-minute accounting, automatic monthly reset
-- **Expiry management** — per-node expiry dates, automatic reminders and service pause on expiry, one-click renewal
-- **Daily health report** — a scheduled Telegram digest: core-service status (Xray / sing-box / mihomo / Nginx, …), traffic warnings, expiry reminders, Reality liveness switches, SSH/BBR/Fail2ban/honeypot/WARP status — the whole picture in one message
-- **Telegram Bot** — query node traffic, manage user bindings, renew expiries, health reports — all from inside Telegram, no server login needed
-- **Backup & restore** — full / selective backups (including Docker volumes), scheduled backups, one-click restore
-- **System management** — BBR congestion control, sysctl network tuning, firewall, DNS, timezone, and common VPS test tools (local health, latency/route, NodeQuality, YABS, IP.Check.Place, RegionRestrictionCheck, bench.sh, LemonBench)
-- **Multilingual interface** — 简体中文 / English / 한국어 / Русский; chosen at install, switchable from the menu, with all 2000+ interface strings fully translated
-
----
-
-## Directory Layout
-
-```
-/opt/psm/
-├── bootstrap.sh          # One-line install entry
-├── manager.sh            # Main entry (interactive menu + non-interactive calls)
-├── install.sh            # First-install wizard
-├── update.sh             # Self-update and component upgrades
-├── uninstall.sh          # Guided uninstaller
-├── config/               # Runtime state and config (gitignored)
-├── lang/                 # Language tables (zh / en / ko / ru)
-├── lib/
-│   ├── common.sh         # Shared utilities
-│   ├── i18n.sh           # Multilingual framework
-│   ├── xray/             # Reality / Vision / XHTTP / SS2022 / WARP / outbound routing / liveness / decoy discovery
-│   ├── singbox/          # sing-box second core (Reality / SS2022 / Hysteria2 / AnyTLS / Snell / routing)
-│   ├── mihomo/           # mihomo third core (Reality / SS2022 / Hysteria2 / AnyTLS / Snell / routing)
-│   ├── vpngate/          # VPNGate residential exit (list, classification, openvpn tunnel, core wiring)
-│   ├── ruleset/          # Subscribed rule sets (fetch, parse, preflight, apply to sing-box and mihomo)
-│   ├── security/         # SSH hardening / Fail2ban / honeypot
-│   ├── cloudflare/       # Tunnel / Access
-│   ├── docker/           # Docker extensions (volume backup, …)
-│   ├── tgbot/            # Telegram notification templates / daily health report / relay status
-│   ├── expiry/           # Expiry management
-│   ├── hysteria2.sh / snell.sh / ssrust.sh / realm.sh
-│   ├── nginx.sh / cert.sh / cloudflare.sh
-│   ├── docker.sh / system.sh / vps_test.sh / backup.sh / traffic.sh
-│   └── tg_bot.sh
-├── scripts/              # Dev helper scripts (i18n checks, …)
-├── templates/            # Config templates (incl. Docker app store templates)
-└── backup/               # Backup archives
-```
-
----
-
-## Write Paths
-
-PSM keeps its own state under `/opt/psm` as much as possible, but some features must write system services, certificates, firewall rules, or app configs. Common paths:
-
-| Path                                                                        | Purpose                                                    |
-| --------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| `/opt/psm`                                                                | PSM program, runtime state, config, backups, Docker Compose projects |
-| `/usr/local/bin/psm`                                                      | Global shortcut command                                    |
-| `/etc/systemd/system/psm-*.service` / `/etc/systemd/system/psm-*.timer` | PSM scheduled tasks and daemons                            |
-| `/usr/local/etc/xray` / `/usr/local/bin/xray`                           | Xray config and binary                                     |
-| `/etc/sing-box` / `/usr/local/bin/sing-box`                             | sing-box config and binary                                 |
-| `/etc/hysteria` / `/usr/local/bin/hysteria`                             | Hysteria2 config and binary                                |
-| `/etc/realm` / `/usr/local/bin/realm`                                   | realm relay config and binary                              |
-| `/etc/nginx`                                                              | Nginx sites, stream routing, and SSL files                 |
-| `/root/.acme.sh`                                                          | acme.sh account and certificate issuance cache             |
-| `/etc/fail2ban` / `iptables`                                            | Fail2ban rules, honeypot, and traffic accounting chains    |
-| `/etc/cron.d/psm-*`                                                       | Cron entries for backup, DDNS, etc.                        |
-
-If you plan to use PSM on a production VPS, read the install output and uninstall prompts first; if the machine already carries important Nginx, Docker, or Cloudflare Tunnel configs, take a snapshot or manual backup beforehand.
-
----
+Debian, Ubuntu, Alpine and RHEL / CentOS / Rocky Linux / AlmaLinux, on x86_64 and arm64. Every commit runs the full test suites on **Debian 13, Ubuntu 24.04 / 22.04, Alpine 3.22, Rocky Linux 9 and AlmaLinux 8**. Details: [Supported systems](https://psm-docs.pages.dev/en/reference/systems).
 
 ## FAQ
 
-### How do I switch the interface language?
-
-Pick "21. 语言 / Language" in the main menu to switch between 简体中文 / English / 한국어 / Русский; the choice is persisted. `PSM_LANG=en psm` overrides the language for a single session.
-
-### What happens if I run the one-line install again?
-
-If `/opt/psm` is a complete installation, the script performs a `git pull` update. If it detects a half-installed state left over from an old uninstall (e.g. `.git` present but the `psm` command or config directory missing), it automatically re-runs the install flow to repair it.
-
-### Xray, sing-box, or mihomo — which should I use?
-
-They are independent, parallel cores. Xray has the richest tooling (liveness watchdog, decoy discovery, traffic accounting); sing-box covers more protocols (AnyTLS, native Snell inbound) with a more modern routing config; mihomo fits Clash.Meta routing and client config workflows (`proxies` / `proxy-groups` / `rules`). Use any one of them, or run several at once — each manages its own ports and nodes.
-
-### Why does the uninstaller let me keep certain components?
-
-Nginx, Docker, certificates, Cloudflare Tunnel, etc. may be shared with other sites or services. The uninstaller removes PSM's own traces by default and confirms each shared component one by one.
-
-### My log shows "REALITY: Listening on non-443 ports" — is that a problem?
-
-Not under 443 port multiplexing; the warning is expected there. Since v26.3.27 Xray warns about any REALITY inbound listening on a non-443 port, because in a direct-connection setup a non-443 port really is easier for the GFW to fingerprint. But in PSM's multiplexing mode the node listens on a loopback port on `127.0.0.1` (1443, 2443, and so on) and Nginx forwards to it from public port 443 by SNI — **the port exposed to the internet is 443**, so the risk the warning describes does not apply.
-
-If a node is not mounted behind the Nginx 443 split and instead listens on a public non-443 port directly, the warning is a genuine one: move it to 443 or put it behind port multiplexing.
-
-The same version can emit two other REALITY warnings: one when the camouflage target contains `apple` / `icloud` / `microsoft` or ends in `.cn` / `.ru` / `.ir` (pick a different domain), and one from v26.4.13 about the default minimum client core version (see the Xray kernel section above).
-
-### Can the decoy target (`dest` / SNI) be a site behind Cloudflare?
-
-Not recommended — and PSM warns you about it during configuration.
-
-REALITY's camouflage works by forwarding every connection that **fails authentication** to the decoy target (`dest`) untouched, so a prober sees a genuine website's full TLS response. That forwarding is unconditional: it looks neither at the source nor at what the ClientHello asked for.
-
-The problem starts when `dest` lands on a multi-tenant CDN edge (Cloudflare, Fastly, Akamai, …). Those IPs serve **any tenant** by SNI, so anyone who scans your port 443 only has to put some other hostname on that CDN into the ClientHello to get a tunnel into the entire CDN through your box — **your server becomes a free port forwarder for the CDN**, on your bandwidth and your bill. The Xray documentation warns about exactly this.
-
-PSM handles it in three layers:
-
-1. **No decoy domain ships as a default** — the default camouflage SNI is empty on all three cores, so no crowd of installs shares one factory default (which could move behind a CDN later anyway). Xray's discovery prefers targets in the **same ASN**, and a host in your own datacenter is not a CDN edge; sing-box and mihomo have no discovery path, so they require an explicit target, and the non-interactive CLI fails with a message instead of building a node on a borrowed default
-2. **A probe at configuration time** — after you enter `dest`, PSM connects to the same IP using a set of unrelated probe hostnames as SNI. If a valid certificate comes back for a hostname the target does not own, it is flagged as a shared frontend. This tests the property that actually matters (does this IP serve arbitrary tenants?) rather than tracking CDN IP ranges or ASNs. It **warns rather than blocks** — the verdict can misfire, and the risk is yours to weigh
-3. **Two backstops** — under 443 port reuse, unknown SNI is dropped at the Nginx layer, so a prober must use the node's real camouflage domain to reach REALITY at all, and that SNI forwarded to `dest` only ever returns `dest`'s own site. And if you proceed past the warning, Xray / mihomo nodes get REALITY fallback rate limiting written in automatically (`limitFallback*` / `limit-fallback-*`)
-
-Two known gaps worth knowing: `limitFallback` is **per connection**, so an abuser who reconnects in a loop bypasses it — it is a backstop, not a fix. And sing-box's reality inbound has no equivalent option at all, which makes "sing-box + direct-listen port + CDN-fronted `dest`" the weakest combination; PSM prompts you to switch to 443 port reuse when it sees one. The real fix is always to **pick a decoy target that is not behind a CDN**.
-
-### Will it overwrite my existing Nginx configuration?
-
-PSM manages its own sites and stream routing configs. If you have production sites, back up `/etc/nginx` first and double-check domains, ports, and certificate paths before menu operations.
-
-### Can I install without root?
-
-No. PSM installs system packages and writes to systemd, and manages Nginx, certificates, firewall, and proxy services — root is required.
-
-### Is it suitable for managing many servers centrally?
-
-PSM currently focuses on local management of a single VPS — no central panel, state sync, or remote orchestration. realm relay can forward traffic between machines, but each machine is still managed independently.
-
----
-
-## Project Links
-
-- [简体中文 README](README.md) · [한국어 README](README_KO.md) · [Русский README](README_RU.md)
-- [Changelog](CHANGELOG.md)
-
----
+- **Do I need a domain?** Not for REALITY; an IP is enough. [More](https://psm-docs.pages.dev/en/faq#domain)
+- **Which protocol?** REALITY first, Hysteria2 for lossy networks. [More](https://psm-docs.pages.dev/en/guide/choose-protocol)
+- **A node does not connect?** Run `psm doctor --fix`, then check your cloud security group. [More](https://psm-docs.pages.dev/en/faq#not-working)
+- **The IP got blocked?** Get a new VPS and `psm migrate push` everything over. [More](https://psm-docs.pages.dev/en/features/migrate)
 
 ## Donate
 
-If this project helps you, consider buying the author a coffee ☕️ — USDT appreciated.
+If PSM helps you, you can buy the author a coffee ☕️ (USDT):
 
-| Network           | QR       | Address                                        |
-| ----------------- | -------- | ---------------------------------------------- |
-| **TRC20**   |          | `TUe1x22n9FPAgLt6YFcQyxWgvTZFNgKBgM`         |
-| **Polygon** |          | `0x5632f6d76a03543c53d750918c9c6a4c372f1597` |
-
-Thanks to every supporter!
-
----
+| Network | Address |
+| --- | --- |
+| **TRC20** | `TUe1x22n9FPAgLt6YFcQyxWgvTZFNgKBgM` |
+| **Polygon** | `0x5632f6d76a03543c53d750918c9c6a4c372f1597` |
 
 ## License
 
-This project is released under the [GNU Affero General Public License v3.0 (AGPL-3.0)](LICENSE).
+[AGPL-3.0](LICENSE). Use it within the law where you live. Release notes: [CHANGELOG](CHANGELOG.md).
