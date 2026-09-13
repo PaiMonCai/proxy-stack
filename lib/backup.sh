@@ -219,7 +219,9 @@ backup_menu() {
             "$(t backup.menu.restore)" \
             "$(t backup.menu.list)" \
             "$(t backup.menu.auto_enable)" \
-            "$(t backup.menu.auto_disable)"
+            "$(t backup.menu.auto_disable)" \
+            "$(t migrate.menu.export)" \
+            "$(t migrate.menu.import)"
 
         case "$MENU_CHOICE" in
             1) do_full_backup ;;
@@ -228,6 +230,8 @@ backup_menu() {
             4) list_backups ;;
             5) auto_backup_enable ;;
             6) auto_backup_disable ;;
+            7) source "$LIB_DIR/migrate.sh"; psm_migrate_export || true ;;
+            8) source "$LIB_DIR/migrate.sh"; migrate_menu_import ;;
             0) return ;;
         esac
         press_enter

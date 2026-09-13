@@ -35,6 +35,8 @@ _sb_choose_channel() {
 # 预览版失败时回落到稳定版（宁可装个能用的旧版，也不要下载一个不存在的 tag）。
 _sb_resolve_tag() {
     local channel="$1" tag=""
+    # psm migrate installs the version the old server ran
+    [[ -n "${PSM_SB_TAG:-}" ]] && { printf '%s' "$PSM_SB_TAG"; return 0; }
     if [[ "$channel" == "preview" ]]; then
         log_step "$(t sb.fetching_preview)"
         tag=$(curl -fsSL "https://api.github.com/repos/SagerNet/sing-box/releases?per_page=20" 2>/dev/null \
@@ -352,6 +354,7 @@ _sb_cfg_backup() {
 #  - 失败：坏配置已落盘，若存在 .prev 则 mv 回去真正恢复变更前配置，再回显错误。
 sb_test_restart() {
     local test_out
+    psm_users_merge sing-box
     if test_out=$("$SB_BIN" check -c "$SB_CFG" 2>&1); then
         rm -f "${SB_CFG}.prev"
         source "$LIB_DIR/coreperm.sh" && psm_core_nonroot_ensure sing-box
@@ -422,6 +425,7 @@ sb_logs() {
 
 # ── Post-install protocol wizard ─────────────────────────────────────────────
 _sb_post_install_wizard() {
+    [[ -z "${PSM_NO_WIZARD:-}" ]] || return 0   # psm migrate installs without questions
     echo ""
     ask_yn "$(t sb.ask_protocol_now)" Y || return 0
     echo -e "\n  $(t sb.protocol_choose)"

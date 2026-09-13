@@ -9,6 +9,7 @@ XRAY_RELEASES="https://github.com/XTLS/Xray-core/releases"
 
 # ── Timezone wizard ───────────────────────────────────────────────────────────
 _tz_set_wizard() {
+    [[ -z "${PSM_NO_WIZARD:-}" ]] || return 0   # psm migrate installs without questions
     local cur; cur=$(timedatectl show -p Timezone --value 2>/dev/null \
                      || cat /etc/timezone 2>/dev/null || echo "unknown")
     echo -e "\n${BOLD}$(t xray.tz.title)${NC}  $(t xray.tz.current "${CYAN}${cur}${NC}")"
@@ -67,6 +68,8 @@ _xray_choose_channel() {
 # 解析通道 → tag。预览失败回落稳定版，稳定版失败回落 XRAY_STABLE_FALLBACK。
 _xray_resolve_tag() {
     local channel="$1" tag=""
+    # psm migrate installs the version the old server ran
+    [[ -n "${PSM_XRAY_TAG:-}" ]] && { printf '%s' "$PSM_XRAY_TAG"; return 0; }
     if [[ "$channel" == "preview" ]]; then
         log_step "$(t xray.fetching_preview)"
         tag=$(curl -fsSL "https://api.github.com/repos/XTLS/Xray-core/releases?per_page=20" 2>/dev/null \
@@ -437,6 +440,7 @@ xray_logs() {
 
 # ── Post-install protocol wizard ─────────────────────────────────────────────
 _xray_post_install_wizard() {
+    [[ -z "${PSM_NO_WIZARD:-}" ]] || return 0   # psm migrate installs without questions
     echo ""
     ask_yn "$(t xray.ask_protocol_now)" Y || return 0
     echo -e "\n  $(t xray.protocol_choose)"

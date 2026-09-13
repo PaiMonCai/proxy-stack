@@ -77,7 +77,26 @@ jobs:
           - { os: debian, suite: e2e }
           - { os: alpine, suite: e2e }
           - { os: alpine, suite: snell }
+          - { os: debian, suite: users }
+          - { os: alpine, suite: users }
     steps:
       - uses: actions/checkout@v4
       - name: tests/integration/container.sh ${{ matrix.os }} ${{ matrix.suite }}
         run: bash tests/integration/container.sh "${{ matrix.os }}" "${{ matrix.suite }}"
+
+  migrate:
+    name: migrate ${{ matrix.src }} → ${{ matrix.dst }} (${{ matrix.mode }})
+    if: github.repository == 'jinqians/proxy-stack'
+    needs: checks
+    runs-on: [self-hosted, linux, psm-vps]
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { src: debian, dst: alpine, mode: push }
+          - { src: alpine, dst: debian, mode: file }
+    steps:
+      - uses: actions/checkout@v4
+      - name: tests/integration/migrate.sh ${{ matrix.src }} ${{ matrix.dst }} ${{ matrix.mode }}
+        run: bash tests/integration/migrate.sh "${{ matrix.src }}" "${{ matrix.dst }}" "${{ matrix.mode }}"

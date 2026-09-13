@@ -633,6 +633,14 @@ nginx_test_reload() {
     fi
 }
 
+# Accounts (lib/users.sh) go into a core's config right before it is checked,
+# so every restart PSM does carries the current users.
+psm_users_merge() {
+    [[ -f "$LIB_DIR/users.sh" ]] || return 0
+    declare -F psm_users_inject >/dev/null || source "$LIB_DIR/users.sh"
+    psm_users_inject "$1"
+}
+
 xray_test_restart() {
     # xray_rebuild_from_stores runs every module's apply in a row and tests the
     # finished config once; testing each half-rebuilt intermediate would fail.
@@ -642,6 +650,7 @@ xray_test_restart() {
     # Camouflage sites from before the h2 fallback (lib/nginx.sh); only defined
     # once a module that uses the fallback has loaded lib/nginx.sh.
     declare -F nginx_upgrade_http_camouflage >/dev/null && nginx_upgrade_http_camouflage
+    psm_users_merge xray
     local test_out
     if test_out=$("$XRAY_BIN" run -test -config "$XRAY_CFG_DIR/config.json" 2>&1) \
         || test_out=$("$XRAY_BIN" -test -config "$XRAY_CFG_DIR/config.json" 2>&1); then

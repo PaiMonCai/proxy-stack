@@ -24,12 +24,27 @@ case "${1:-}" in
         psm_node_cli "$@"
         exit $?
         ;;
+    migrate)
+        shift
+        source "$LIB_DIR/migrate.sh"
+        psm_migrate_cli "$@"
+        exit $?
+        ;;
+    user)
+        shift
+        source "$LIB_DIR/users.sh"
+        psm_users_cli "$@"
+        exit $?
+        ;;
     help|--help|-h)
         cat <<'EOF'
 Usage:
   psm                         Open the interactive manager
   psm doctor [--json] [--fix] Run system and configuration checks; --fix repairs what it safely can
   psm node <command> [...]    Manage nodes non-interactively
+  psm user <command> [...]    Accounts on the nodes: add, list, show, update, delete, links, token
+  psm migrate export|import|push [...]
+                              Move this server to another host (psm migrate --help)
 
 Node commands:
   psm node list [--core CORE] [--protocol PROTOCOL] [--json]

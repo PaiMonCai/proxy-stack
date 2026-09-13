@@ -190,6 +190,10 @@ manager.sh --health-report         # 发送一次每日体检报告
 psm doctor                         # 系统与配置诊断（只读）
 psm doctor --json                  # 结构化 JSON 报告
 psm doctor --fix                   # 自动修复：重启停掉的内核、恢复开机自启、重建端口跳跃规则、续期证书等，修完再检查一遍
+psm migrate push root@新服务器      # 一键迁移：节点、密钥、证书、Nginx、acme.sh 经 SSH 在新服务器上重建（新服务器只需能 SSH 登录）
+psm migrate export --encrypt       # 或导出加密迁移包，拷到新服务器后执行 psm migrate import 文件
+psm user add alice --days 30 --quota 100G   # 多用户：每人一套 UUID/密码、到期时间、独立订阅（流量配额按 Xray 节点统计）
+psm user list / show alice / links alice / token alice / update alice --disable / delete alice
 
 psm node list --json               # 列出三内核的全部节点
 psm node show xray reality node-1 --json

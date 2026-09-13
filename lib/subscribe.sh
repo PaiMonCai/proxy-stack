@@ -31,6 +31,19 @@ _sub_state_get()  { _sub_state_load | jq -r "$1 // empty" 2>/dev/null || true; }
 # ── 收集节点 URI ──────────────────────────────────────────────────────────────
 # 返回每行一条 URI。跳过没有标准 URI 的协议（Snell）和仅本机的 SOCKS5 —— 后者
 # 的地址是 127.0.0.1，放进订阅只会让客户端连一个连不上的地址。
+# psm user: a node as one user sees it — their credentials — or status 1 when
+# the node is not theirs or has no per-user login (Shadowsocks 2022, Snell,
+# WireGuard, SOCKS without a password). Active only while _SUB_USER is set.
+_sub_as_user() {   # <protocol> <node JSON>
+    case "$1" in ss2022|snell|wireguard) return 1 ;; esac
+    jq -ce --argjson u "$_SUB_USER" '
+        .tag as $t | select((($u.nodes | index("*")) != null) or (($u.nodes | index($t)) != null))
+        | if has("uuid") then .uuid = $u.uuid else . end
+        | if has("password") then .password = $u.password else . end
+        | if has("username") then (if (.username // "") == "" then empty else .username = ("psmu-" + $u.name) end)
+          else . end' <<<"$2"
+}
+
 _sub_collect_uris() {
     local server="$1"
     source "$LIB_DIR/node_cli.sh"
@@ -41,6 +54,7 @@ _sub_collect_uris() {
         core=$(printf '%s' "$n"  | jq -r '.core')
         proto=$(printf '%s' "$n" | jq -r '.protocol')
         node=$(printf '%s' "$n"  | jq -c '.node')
+        if [[ -n "${_SUB_USER:-}" ]]; then node=$(_sub_as_user "$proto" "$node") || continue; fi
         [[ "$proto" == "snell" || "$proto" == "wireguard" ]] && continue   # no URI: Snell, wg-quick files
         if [[ "$proto" == "socks" ]] \
            && [[ "$(printf '%s' "$node" | jq -r '.listen_addr // ""')" == "127.0.0.1" ]]; then
@@ -51,7 +65,7 @@ _sub_collect_uris() {
 
     # 独立协议（Hysteria2 / ss-rust / Snell）不在三内核的节点存储里，单独收集。
     # 「导出全部节点」漏掉它们的话，用户拿到的订阅是残缺的，而且不会有任何提示。
-    _sub_standalone_uris "$server"
+    [[ -n "${_SUB_USER:-}" ]] || _sub_standalone_uris "$server"
 }
 
 # ── 独立协议（不走三内核，节点信息在各自的配置文件里）────────────────────────
@@ -128,6 +142,7 @@ _sub_build_singbox_client() {
         proto=$(printf '%s' "$n" | jq -r '.protocol')
         tag=$(printf '%s' "$n"   | jq -r '.tag')
         node=$(printf '%s' "$n"  | jq -c '.node')
+        if [[ -n "${_SUB_USER:-}" ]]; then node=$(_sub_as_user "$proto" "$node") || continue; fi
         ob=$(_sub_sb_outbound "$core" "$proto" "$node" "$server" "$tag") || continue
         [[ -n "$ob" ]] || continue
         # ECH: the one place a client can get the config (share links cannot carry it)
@@ -244,11 +259,12 @@ _sub_build_mihomo_client() {
     # 这类节点从 provider 里排除，改为显式写成 ws + v2ray-http-upgrade。
     local hu_json hu_filter="" hu_proxies="" hu_names=""
     source "$LIB_DIR/node_cli.sh"
-    hu_json=$(_node_cli_collect "" "" 2>/dev/null | jq -c --arg s "$server" '[.[]
+    hu_json=$(_node_cli_collect "" "" 2>/dev/null | jq -c --arg s "$server" --argjson u "${_SUB_USER:-null}" '[.[]
+        | .node.tag as $t | select($u == null or (($u.nodes | index("*")) != null) or (($u.nodes | index($t)) != null))
         | select((.core == "xray" and .protocol == "xhttp" and .node.mode == "httpupgrade")
               or (.core == "sing-box" and .protocol == "vless" and .node.transport == "httpupgrade"))
         | .node as $n
-        | { name: ("PSM-" + $n.tag), server: $s, port: ($n.public_port // $n.port), uuid: $n.uuid,
+        | { name: ("PSM-" + $n.tag), server: $s, port: ($n.public_port // $n.port), uuid: (if $u == null then $n.uuid else $u.uuid end),
             host: (if (.core == "xray") then $n.domain else $n.sni end), path: ($n.path // "/"),
             insecure: (($n.insecure // 0) | tostring | test("^(1|true)$")) }]' 2>/dev/null) || hu_json='[]'
     if [[ "$(jq 'length' <<<"${hu_json:-[]}")" != "0" ]]; then
@@ -345,6 +361,23 @@ sub_online_prune() {
     fi
 }
 
+# Writes the three files of an online subscription for <server> (the address
+# the share links carry). psm migrate rewrites them for the new host's address.
+_sub_online_write() {   # <token> <domain> <server>
+    local token="$1" domain="$2" server="$3" dir uris
+    dir=$(_sub_token_dir "$token")
+    uris=$(_sub_collect_uris "$server")
+    [[ -n "$uris" ]] || { rm -rf "$dir"; return 1; }
+    mkdir -p "$dir"
+    local base="https://${domain}/${SUB_URL_PREFIX}/${token}"
+    printf '%s' "$(printf '%s' "$uris" | openssl base64 -A)" > "$dir/sub.txt"
+    _sub_build_singbox_client "$server" > "$dir/singbox.json"
+    # mihomo 的 provider 要指回订阅本身，这里把占位符换成真实 URL
+    _sub_build_mihomo_client "$server" | sed "s|__SUB_URL__|${base}/sub.txt|" > "$dir/mihomo.yaml"
+    chmod 644 "$dir"/*            # Nginx 要读；保密性靠不可猜的 token，不靠权限
+    chmod 711 "$dir"              # 不可列目录
+}
+
 sub_online_enable() {
     local domain; domain=$(_sub_state_get '.domain')
     [[ -n "$domain" ]] || ask domain "$(t sub.online.ask_domain)"
@@ -358,6 +391,12 @@ sub_online_enable() {
         cert_ensure_domain "$domain" || { log_error "$(t sub.online.no_cert)"; return 1; }
     fi
     nginx_setup_camouflage_site "$domain" || { log_error "$(t sub.online.site_failed)"; return 1; }
+    # When Nginx owns 443 (SNI routing), the domain needs its own route to the
+    # site (127.0.0.1:8443); without one the map's default drops the handshake.
+    # A domain that already routes to a node keeps that route.
+    if [[ -f "$(_sni_map_file)" ]] && ! _sni_lookup_entry "$domain" >/dev/null; then
+        _sni_add_entry "$domain" "127.0.0.1:8443" || { log_error "$(t sub.online.site_failed)"; return 1; }
+    fi
 
     local days; ask days "$(t sub.online.ask_days)" "$SUB_DEFAULT_DAYS"
     [[ "$days" =~ ^[0-9]+$ ]] && (( days > 0 )) || { log_error "$(t sub.online.bad_days)"; return 1; }
@@ -370,20 +409,9 @@ sub_online_enable() {
     [[ -n "$old" ]] && rm -rf "$(_sub_token_dir "$old")" 2>/dev/null || true
 
     local token; token=$(rand_str 48) || return 1
-    local dir; dir=$(_sub_token_dir "$token")
-    mkdir -p "$dir"
-
     log_step "$(t sub.building)"
-    local uris; uris=$(_sub_collect_uris "$server")
-    [[ -n "$uris" ]] || { log_warn "$(t sub.no_nodes)"; rm -rf "$dir"; return 1; }
-
+    _sub_online_write "$token" "$domain" "$server" || { log_warn "$(t sub.no_nodes)"; return 1; }
     local base="https://${domain}/${SUB_URL_PREFIX}/${token}"
-    printf '%s' "$(printf '%s' "$uris" | openssl base64 -A)" > "$dir/sub.txt"
-    _sub_build_singbox_client "$server" > "$dir/singbox.json"
-    # mihomo 的 provider 要指回订阅本身，这里把占位符换成真实 URL
-    _sub_build_mihomo_client "$server" | sed "s|__SUB_URL__|${base}/sub.txt|" > "$dir/mihomo.yaml"
-    chmod 644 "$dir"/*            # Nginx 要读；保密性靠不可猜的 token，不靠权限
-    chmod 711 "$dir"              # 不可列目录
 
     local exp; exp=$(( $(date +%s) + days * 86400 ))
     _sub_state_save "$(jq -n --arg t "$token" --arg d "$domain" --arg s "$server" \
@@ -405,6 +433,12 @@ sub_online_disable() {
     [[ -n "$tok" ]] || { log_warn "$(t sub.online.not_enabled)"; return 0; }
     ask_yn "$(t sub.online.confirm_disable)" N || return 0
     rm -rf "$(_sub_token_dir "$tok")" 2>/dev/null || true
+    # the SNI route sub_online_enable added (only if it still points at the site)
+    local domain; domain=$(_sub_state_get '.domain')
+    source "$LIB_DIR/nginx.sh"
+    if [[ -n "$domain" && "$(_sni_lookup_entry "$domain" 2>/dev/null)" == "127.0.0.1:8443" ]]; then
+        _sni_remove_entry "$domain" || true
+    fi
     _sub_state_save '{}'
     log_ok "$(t sub.online.disabled)"
 }

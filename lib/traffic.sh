@@ -612,6 +612,10 @@ traffic_check() {
     _trf_enforce
     # Expiry enforcement (non-fatal if module not loaded)
     declare -f expiry_check &>/dev/null && expiry_check || true
+    # Accounts (lib/users.sh): expiry, Xray per-user quota, monthly rollover
+    if [[ -f "$CFG_DIR/users.json" ]]; then
+        { source "$LIB_DIR/users.sh" && users_check; } || true
+    fi
 }
 
 # ── Systemd timer management ──────────────────────────────────────────────────

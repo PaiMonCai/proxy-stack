@@ -37,11 +37,13 @@ mh_install() {
 
     # mihomo 上游按正常节奏发稳定版，/releases/latest 就是最新稳定版，不需要像
     # Xray / sing-box 那样另开预览通道。兜底版本只在 API 不可达时使用。
-    local tag
-    log_step "$(t mh.fetching_latest)"
-    tag=$(curl -fsSL "https://api.github.com/repos/MetaCubeX/mihomo/releases/latest" 2>/dev/null \
-          | jq -r '.tag_name // empty' || true)
-    [[ "$tag" =~ ^v[0-9] ]] || { log_warn "$(t mh.latest_fallback "$MH_STABLE_FALLBACK")"; tag="$MH_STABLE_FALLBACK"; }
+    local tag="${PSM_MH_TAG:-}"   # psm migrate installs the version the old server ran
+    if [[ -z "$tag" ]]; then
+        log_step "$(t mh.fetching_latest)"
+        tag=$(curl -fsSL "https://api.github.com/repos/MetaCubeX/mihomo/releases/latest" 2>/dev/null \
+              | jq -r '.tag_name // empty' || true)
+        [[ "$tag" =~ ^v[0-9] ]] || { log_warn "$(t mh.latest_fallback "$MH_STABLE_FALLBACK")"; tag="$MH_STABLE_FALLBACK"; }
+    fi
 
     local asset="mihomo-linux-${asset_arch}-${tag}.gz"
     local url="${MH_RELEASES}/download/${tag}/${asset}"
@@ -321,6 +323,7 @@ _mh_cfg_backup() {
 #  - 失败：坏配置已落盘，若存在 .prev 则 mv 回去真正恢复变更前配置，再回显错误。
 mh_test_restart() {
     local test_out
+    psm_users_merge mihomo
     if test_out=$("$MH_BIN" -t -d "$MH_CFG_DIR" -f "$MH_CFG" 2>&1); then
         rm -f "${MH_CFG}.prev"
         _mh_sync_safe_paths
@@ -392,6 +395,7 @@ mh_logs() {
 
 # ── Post-install protocol wizard ─────────────────────────────────────────────
 _mh_post_install_wizard() {
+    [[ -z "${PSM_NO_WIZARD:-}" ]] || return 0   # psm migrate installs without questions
     echo ""
     ask_yn "$(t mh.ask_protocol_now)" Y || return 0
     echo -e "\n  $(t mh.protocol_choose)"

@@ -190,6 +190,10 @@ These are the real entry points invoked by each module's scheduled tasks. The "e
 psm doctor                         # Read-only host and configuration diagnostics
 psm doctor --json                  # Structured JSON report
 psm doctor --fix                   # Repair what it finds (restart a stopped core, re-enable boot start, rebuild hop rules, renew certificates, …), then check again
+psm migrate push root@NEW-SERVER   # One-step move: nodes, keys, certificates, Nginx and acme.sh rebuilt on the new server over SSH (it only needs SSH)
+psm migrate export --encrypt       # Or write an encrypted bundle, copy it over, and run psm migrate import FILE there
+psm user add alice --days 30 --quota 100G   # Accounts: own UUID/password per user, expiry, own subscription (quota counts Xray nodes)
+psm user list / show alice / links alice / token alice / update alice --disable / delete alice
 
 psm node list --json               # List nodes from all three cores
 psm node show xray reality node-1 --json
