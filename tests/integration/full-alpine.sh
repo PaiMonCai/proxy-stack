@@ -95,6 +95,11 @@ sec "main menu logo"
 menu_at() { printf '0\n' | TERM=xterm-256color script -qfc "stty cols $1 rows 40; bash manager.sh" /dev/null 2>&1; }
 chk "logo beside the title (100 columns)" bash -c "$(declare -f menu_at); menu_at 100 | grep -q '┏━━━━┛'"
 chk "no logo on a narrow terminal (50 columns)" bash -c "$(declare -f menu_at); out=\$(menu_at 50); grep -q 'Proxy Stack Manager' <<<\"\$out\" && ! grep -q '┏━━━━┛' <<<\"\$out\""
+# The eleven two-column rows (the right-hand items are 12–22, each wrapped in a
+# colour code), in Chinese: padding must not depend on the locale, or the
+# right-hand column drifts on servers without a UTF-8 locale.
+menu_rows() { printf '0\n' | LANG="$1" PSM_LANG=zh bash manager.sh 2>&1 | tr -d '\033' | grep -aE 'm(1[2-9]|2[0-2])\.\['; }
+chk "main menu columns are the same in the C and UTF-8 locales" bash -c "$(declare -f menu_rows); a=\$(menu_rows C); b=\$(menu_rows C.UTF-8); [[ \$(wc -l <<<\"\$a\") -eq 11 && \"\$a\" == \"\$b\" ]]"
 
 sec "doctor / test suite"
 chk "doctor --json" bash -c "bash manager.sh doctor --json | jq -e '.checks | length > 0'"

@@ -258,18 +258,43 @@ _banner() {
 
 # Pad string to a fixed display-column width, accounting for CJK double-width chars.
 # CJK (3-byte UTF-8): 1 char but 2 display cols → display = chars + (bytes-chars)/2
+# Display width of a string in $_MW, whatever the locale. ${#s} counts bytes
+# under the C locale (a fresh VPS often has no UTF-8 locale), which made every
+# Chinese label look three cells wide and pushed the right-hand column left.
+# So walk the UTF-8 bytes: ASCII and two-byte sequences (Latin, Cyrillic) take
+# one cell, three- and four-byte ones (CJK, Hangul) two, continuation bytes none.
+_mwidth() {
+    local s="$1" i code
+    local LC_ALL=C
+    _MW=0
+    for (( i = 0; i < ${#s}; i++ )); do
+        printf -v code '%d' "'${s:i:1}"
+        (( code < 0 )) && (( code += 256 ))
+        if (( code < 0x80 || (code >= 0xC0 && code < 0xE0) )); then
+            (( _MW += 1 ))
+        elif (( code >= 0xE0 )); then
+            (( _MW += 2 ))
+        fi
+    done
+}
+
+# Pads a menu label to w display cells (default: $_MPAD_W, else 20).
 _mpad() {
-    local s="$1" w="${2:-20}"
-    local b c disp pad
-    b=$(printf '%s' "$s" | wc -c)
-    c=${#s}
-    disp=$(( c + (b - c) / 2 ))
-    pad=$(( w - disp > 0 ? w - disp : 0 ))
+    local s="$1" w="${2:-${_MPAD_W:-20}}" pad
+    _mwidth "$s"
+    pad=$(( w - _MW > 0 ? w - _MW : 0 ))
     printf '%s%*s' "$s" "$pad" ''
 }
 
 _main_menu() {
     local C="${CYAN}" N="${NC}" B="${BOLD}${BLUE}"
+    # The left column is as wide as its longest label (some Russian ones pass
+    # 20 cells); _mpad reads _MPAD_W.
+    local _MPAD_W=20 _MW k
+    for k in system singbox mihomo xray snell ssrust hysteria2 nginx website cert view_nodes; do
+        _mwidth "$(t "menu.main.$k")"
+        (( _MW > _MPAD_W )) && _MPAD_W=$_MW
+    done
     echo -e "${B}══════════════════════════════════════════════════════════════${NC}"
     echo -e "${BOLD}                  $(t menu.main.title)${NC}"
     echo -e "${B}══════════════════════════════════════════════════════════════${NC}"
