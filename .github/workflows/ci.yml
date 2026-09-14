@@ -32,17 +32,19 @@ jobs:
             cp -a /src /w && cd /w && bash scripts/ci.sh'
 
   psm-agent:
-    name: psm-agent (go vet · test · amd64/arm64 builds)
+    name: psm-agent (gofmt · go vet · test · amd64/arm64 builds)
     if: github.repository == 'jinqians/proxy-stack'
     runs-on: [self-hosted, linux, psm-vps]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - name: go vet, go test, static builds (golang container)
+      - name: gofmt, go vet, go test, static builds (golang container)
         run: |
           docker run --rm -v "$PWD/agent:/src:ro" golang:1.27-alpine sh -c '
             set -e
             cp -a /src /w && cd /w
+            unformatted=$(gofmt -l .)
+            if [ -n "$unformatted" ]; then echo "not gofmt-formatted: $unformatted"; exit 1; fi
             go vet ./...
             go test -count=1 ./...
             for arch in amd64 arm64; do

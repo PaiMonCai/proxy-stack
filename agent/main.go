@@ -1,8 +1,9 @@
 // psm-agent connects a server to the PSM panel.
 //
-// It opens no port, not even on loopback: every few seconds it makes one HTTPS
-// request to the panel, which carries the results of its last tasks and brings
-// back new ones. Each task is run as a psm command with its arguments passed as
+// It opens no port, not even on loopback: it makes one HTTPS request to the
+// panel at a time, which carries the results of its last tasks and brings back
+// new ones, then waits as long as the panel says (30 s when idle, 3 s while
+// there is work). Each task is run as a psm command with its arguments passed as
 // an argv array (never through a shell) and checked against allowlists first,
 // so the panel can make the server do nothing the psm command line cannot.
 //
@@ -38,7 +39,7 @@ const (
 	requestTimeout  = 30 * time.Second  // one request to the panel
 	maxTaskData     = 64 << 10          // a task's node settings
 	maxResponse     = 1 << 20           // a response from the panel
-	defaultInterval = 10 * time.Second
+	defaultInterval = 30 * time.Second  // the panel says how long to wait; this is the fallback
 	defaultConfig   = "/etc/psm/agent.json"
 )
 
@@ -160,7 +161,7 @@ func join(ctx context.Context, cfgPath, panel, joinToken string, allowHTTP bool)
 	}
 	host, _ := os.Hostname()
 	var resp struct {
-		AgentToken string `json:"agent_token"`
+		AgentToken string                `json:"agent_token"`
 		Server     struct{ Name string } `json:"server"`
 	}
 	req := map[string]string{"join_token": joinToken, "hostname": host, "agent_version": agentVersion}
