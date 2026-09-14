@@ -10,9 +10,9 @@ backup/
 # Logs
 logs/
 
-# psm-api build output (released binaries are built by CI, never committed)
-api/psm-api
-api/psm-api-*
+# psm-agent build output (released binaries are built by CI, never committed)
+agent/psm-agent
+agent/psm-agent-*
 
 # Control-plane runtime data and Python bytecode
 __pycache__/
