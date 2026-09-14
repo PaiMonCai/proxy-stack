@@ -36,6 +36,34 @@ case "${1:-}" in
         psm_users_cli "$@"
         exit $?
         ;;
+    core)
+        shift
+        source "$LIB_DIR/core_cli.sh"
+        psm_core_cli "$@"
+        exit $?
+        ;;
+    standalone)
+        shift
+        source "$LIB_DIR/standalone_cli.sh"
+        psm_standalone_cli "$@"
+        exit $?
+        ;;
+    traffic)
+        shift
+        source "$LIB_DIR/traffic_cli.sh"
+        psm_traffic_cli "$@"
+        exit $?
+        ;;
+    agent)
+        shift
+        source "$LIB_DIR/agent.sh"
+        psm_agent_cli "$@"
+        exit $?
+        ;;
+    version|--version)
+        psm_version
+        exit 0
+        ;;
     help|--help|-h)
         cat <<'EOF'
 Usage:
@@ -43,6 +71,14 @@ Usage:
   psm doctor [--json] [--fix] Run system and configuration checks; --fix repairs what it safely can
   psm node <command> [...]    Manage nodes non-interactively
   psm user <command> [...]    Accounts on the nodes: add, list, show, update, delete, links, token
+  psm core list|install [...] The cores: list them, install one without questions
+  psm standalone <command> [...]
+                              Standalone Snell (v4/v5/v6) and ss-rust: install, show, export, remove
+  psm traffic list|set|reset|unset [...]
+                              Traffic metering and limits per node
+  psm agent join|status|remove [...]
+                              Connect this server to a PSM panel (psm-agent)
+  psm version                 The PSM version (date and commit)
   psm migrate export|import|push [...]
                               Move this server to another host (psm migrate --help)
 

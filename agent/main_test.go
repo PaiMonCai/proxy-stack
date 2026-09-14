@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 const agentToken = "agent-token-0123456789abcdef0123456789abcdef"
@@ -26,7 +27,7 @@ type call struct {
 type fakeRunner struct {
 	mu     sync.Mutex
 	calls  []call
-	stdout map[string]string // by the psm subcommand ("add", "export", …)
+	stdout map[string]string // by the psm subcommand ("add", "export", …; "" for `psm version`)
 	fail   map[string]string // subcommand → stderr of a failure
 }
 
@@ -89,9 +90,12 @@ func (p *fakePanel) handler(t *testing.T) http.Handler {
 	})
 }
 
+// newTestAgent: the traffic report and the version lookup are not due, so the
+// psm calls a test sees are those of its tasks.
 func newTestAgent(t *testing.T, p *fakePanel, f *fakeRunner) (*agent, func()) {
 	srv := httptest.NewServer(p.handler(t))
-	return &agent{cfg: &config{Panel: srv.URL, Token: agentToken, AllowHTTP: true}, run: f.run, hostname: "hk1"}, srv.Close
+	return &agent{cfg: &config{Panel: srv.URL, Token: agentToken, AllowHTTP: true}, run: f.run, hostname: "hk1",
+		lastTraffic: time.Now(), versionAt: time.Now(), psmVersion: "2026-09-15 abc1234"}, srv.Close
 }
 
 func results(t *testing.T, raw json.RawMessage) []result {
@@ -144,7 +148,8 @@ func TestSyncRunsTasksAndReportsResults(t *testing.T) {
 		{ID: 1, Kind: "node.add", Core: "xray", Protocol: "reality", Data: json.RawMessage(`{"tag":"hk","port":443,"server_name":"a.example"}`), Server: "203.0.113.10", Format: "uri"},
 		{ID: 2, Kind: "node.delete", Core: "sing-box", Protocol: "tuic", Tag: "old"},
 	}}
-	f := &fakeRunner{stdout: map[string]string{"add": `{"status":"created"}`, "export": "vless://x@203.0.113.10:443#PSM-hk\n", "delete": `{"status":"deleted"}`}}
+	f := &fakeRunner{stdout: map[string]string{"install": `{"core":"xray","installed":true}`, "add": `{"status":"created"}`,
+		"export": "vless://x@203.0.113.10:443#PSM-hk\n", "delete": `{"status":"deleted"}`}}
 	a, done := newTestAgent(t, p, f)
 	defer done()
 
@@ -152,8 +157,10 @@ func TestSyncRunsTasksAndReportsResults(t *testing.T) {
 		t.Fatalf("first sync: wait=%v err=%v (with results pending it reports at once)", wait, err)
 	}
 	want := []call{
+		{[]string{"core", "install", "xray", "--if-missing", "--json"}, ""},
 		{[]string{"node", "add", "xray", "reality", "--input", "-", "--json"}, `{"tag":"hk","port":443,"server_name":"a.example"}`},
 		{[]string{"node", "export", "xray", "reality", "hk", "--format", "uri", "--server", "203.0.113.10"}, ""},
+		{[]string{"node", "export", "xray", "reality", "hk", "--format", "singbox", "--server", "203.0.113.10"}, ""},
 		{[]string{"node", "delete", "sing-box", "tuic", "old", "--yes", "--if-exists", "--json"}, ""},
 	}
 	if !reflect.DeepEqual(f.calls, want) {
@@ -163,11 +170,108 @@ func TestSyncRunsTasksAndReportsResults(t *testing.T) {
 		t.Fatalf("second sync: wait=%v err=%v", wait, err)
 	}
 	rs := results(t, p.requests[1]["results"])
-	if len(rs) != 2 || !rs[0].OK || rs[0].Link != "vless://x@203.0.113.10:443#PSM-hk" || !rs[1].OK {
+	if len(rs) != 2 || !rs[0].OK || rs[0].Link != "vless://x@203.0.113.10:443#PSM-hk" || rs[0].Outbound != nil || !rs[1].OK {
 		t.Fatalf("results delivered: %+v", rs)
 	}
 	if len(results(t, p.requests[0]["results"])) != 0 {
 		t.Error("the first sync carried results before any task ran")
+	}
+	if string(p.requests[0]["psm_version"]) != `"2026-09-15 abc1234"` {
+		t.Errorf("psm_version sent: %s", p.requests[0]["psm_version"])
+	}
+}
+
+func TestACoreThatWillNotInstallFailsTheNode(t *testing.T) {
+	p := &fakePanel{tasks: []task{{ID: 4, Kind: "node.add", Core: "mihomo", Protocol: "anytls", Data: json.RawMessage(`{"tag":"m","port":8443}`)}}}
+	f := &fakeRunner{fail: map[string]string{"install": "psm core: installing mihomo failed\n"}}
+	a, done := newTestAgent(t, p, f)
+	defer done()
+	_, _ = a.step(context.Background())
+	_, _ = a.step(context.Background())
+	if len(f.calls) != 1 {
+		t.Fatalf("psm node add ran although the core did not install: %q", f.calls)
+	}
+	rs := results(t, p.requests[1]["results"])
+	if len(rs) != 1 || rs[0].OK || rs[0].Error != "installing mihomo: psm core: installing mihomo failed" {
+		t.Fatalf("result %+v", rs)
+	}
+}
+
+func TestStandaloneAndTrafficTasks(t *testing.T) {
+	p := &fakePanel{tasks: []task{
+		{ID: 1, Kind: "standalone.install", Protocol: "snell", Tag: "hk-snell", Data: json.RawMessage(`{"port":31000,"version":"6","psk":"abcdefgh12"}`), Server: "203.0.113.10", Format: "surge"},
+		{ID: 2, Kind: "standalone.install", Protocol: "ss2022", Tag: "hk-ss", Data: json.RawMessage(`{"port":31001,"method":"2022-blake3-aes-256-gcm"}`), Server: "203.0.113.10", Format: "uri"},
+		{ID: 3, Kind: "traffic.set", Tag: "hk-ss", LimitBytes: 1 << 30, ResetDay: 5},
+		{ID: 4, Kind: "traffic.set", Tag: "hk-snell"},
+		{ID: 5, Kind: "traffic.reset", Tag: "hk-ss"},
+		{ID: 6, Kind: "standalone.remove", Protocol: "snell"},
+	}}
+	f := &fakeRunner{stdout: map[string]string{"install": `{"active":true}`, "export": `{"type":"shadowsocks"}`,
+		"set": `{"tag":"x"}`, "reset": `{"tag":"x"}`, "remove": `{"status":"removed"}`}}
+	a, done := newTestAgent(t, p, f)
+	defer done()
+	if _, err := a.step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	want := [][]string{
+		{"standalone", "install", "snell", "--port", "31000", "--json", "--version", "6", "--psk", "abcdefgh12"},
+		{"standalone", "export", "snell", "--name", "PSM-hk-snell", "--format", "surge", "--server", "203.0.113.10"},
+		{"standalone", "export", "snell", "--name", "PSM-hk-snell", "--format", "singbox", "--server", "203.0.113.10"},
+		{"standalone", "install", "ss2022", "--port", "31001", "--json", "--method", "2022-blake3-aes-256-gcm"},
+		{"standalone", "export", "ss2022", "--name", "PSM-hk-ss", "--format", "uri", "--server", "203.0.113.10"},
+		{"standalone", "export", "ss2022", "--name", "PSM-hk-ss", "--format", "singbox", "--server", "203.0.113.10"},
+		{"traffic", "set", "hk-ss", "--limit-bytes", "1073741824", "--json", "--reset-day", "5"},
+		{"traffic", "set", "hk-snell", "--limit-bytes", "0", "--json"},
+		{"traffic", "reset", "hk-ss", "--json"},
+		{"standalone", "remove", "snell", "--yes", "--json"},
+	}
+	var got [][]string
+	for _, c := range f.calls {
+		got = append(got, c.args)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("psm calls\n got %q\nwant %q", got, want)
+	}
+	if !a.lastTraffic.IsZero() {
+		t.Error("a traffic task did not make the counters due")
+	}
+	f.stdout["list"] = `[{"tag":"hk-ss","used_bytes":5}]`
+	_, _ = a.step(context.Background())
+	req := p.requests[len(p.requests)-1]
+	if string(req["traffic"]) != `[{"tag":"hk-ss","used_bytes":5}]` {
+		t.Fatalf("traffic sent: %s", req["traffic"])
+	}
+	rs := results(t, req["results"])
+	if len(rs) != 6 || string(rs[1].Outbound) != `{"type":"shadowsocks"}` || rs[0].Link == "" {
+		t.Fatalf("results: %+v", rs)
+	}
+	for _, r := range rs {
+		if !r.OK {
+			t.Errorf("task %d failed: %s", r.TaskID, r.Error)
+		}
+	}
+}
+
+func TestTrafficIsReportedWhenDue(t *testing.T) {
+	p := &fakePanel{}
+	f := &fakeRunner{stdout: map[string]string{"list": `[{"tag":"a","used_bytes":1}]`}}
+	a, done := newTestAgent(t, p, f)
+	defer done()
+	a.lastTraffic = time.Now().Add(-trafficEvery)
+	_, _ = a.step(context.Background())
+	_, _ = a.step(context.Background())
+	if string(p.requests[0]["traffic"]) != `[{"tag":"a","used_bytes":1}]` {
+		t.Fatalf("first sync traffic: %s", p.requests[0]["traffic"])
+	}
+	if _, sent := p.requests[1]["traffic"]; sent {
+		t.Fatal("traffic sent again before ten minutes")
+	}
+	// the panel can ask for the counters at once
+	p.tasks = []task{{ID: 9, Kind: "traffic.report"}}
+	_, _ = a.step(context.Background()) // takes the task
+	_, _ = a.step(context.Background()) // reports its result, with the counters
+	if string(p.requests[3]["traffic"]) != `[{"tag":"a","used_bytes":1}]` {
+		t.Fatalf("traffic after traffic.report: %s", p.requests[3]["traffic"])
 	}
 }
 
@@ -182,6 +286,17 @@ func TestBadTasksNeverReachPSM(t *testing.T) {
 		{ID: 7, Kind: "node.update", Core: "xray", Protocol: "reality", Tag: "a", Data: json.RawMessage(`"x"`)},
 		{ID: 8, Kind: "node.export", Core: "xray", Protocol: "reality", Tag: "a", Server: "$(id)"},
 		{ID: 9, Kind: "shell", Core: "xray", Protocol: "reality"},
+		{ID: 10, Kind: "standalone.install", Protocol: "hysteria2", Tag: "a", Data: json.RawMessage(`{"port":1}`)},
+		{ID: 11, Kind: "standalone.install", Protocol: "snell", Tag: "a", Data: json.RawMessage(`{"port":1,"psk":"--help me"}`)},
+		{ID: 12, Kind: "standalone.install", Protocol: "snell", Tag: "a", Data: json.RawMessage(`{"port":1,"version":"3"}`)},
+		{ID: 13, Kind: "standalone.install", Protocol: "ss2022", Tag: "a", Data: json.RawMessage(`{"port":1,"method":"aes-256-gcm"}`)},
+		{ID: 14, Kind: "standalone.install", Protocol: "ss2022", Tag: "a", Data: json.RawMessage(`{"port":1,"password":"not base64!"}`)},
+		{ID: 15, Kind: "standalone.install", Protocol: "ss2022", Tag: "-a", Data: json.RawMessage(`{"port":1}`)},
+		{ID: 16, Kind: "standalone.remove", Protocol: "xray"},
+		{ID: 17, Kind: "traffic.set", Tag: "--all", LimitBytes: 1},
+		{ID: 18, Kind: "traffic.set", Tag: "a", LimitBytes: -1},
+		{ID: 19, Kind: "traffic.set", Tag: "a", ResetDay: 31},
+		{ID: 20, Kind: "traffic.reset", Tag: "a b"},
 	}}
 	f := &fakeRunner{}
 	a, done := newTestAgent(t, p, f)
@@ -196,8 +311,8 @@ func TestBadTasksNeverReachPSM(t *testing.T) {
 		t.Fatal(err)
 	}
 	rs := results(t, p.requests[1]["results"])
-	if len(rs) != 9 {
-		t.Fatalf("%d results, want 9", len(rs))
+	if len(rs) != 20 {
+		t.Fatalf("%d results, want 20", len(rs))
 	}
 	for _, r := range rs {
 		if r.OK || !strings.HasPrefix(r.Error, "rejected by psm-agent") {
@@ -216,6 +331,24 @@ func TestPSMFailureIsReported(t *testing.T) {
 	rs := results(t, p.requests[1]["results"])
 	if len(rs) != 1 || rs[0].OK || rs[0].Error != "psm node: unsupported core/protocol: xray/tuic" {
 		t.Fatalf("result %+v", rs)
+	}
+}
+
+func TestStatusGathersTheServer(t *testing.T) {
+	p := &fakePanel{tasks: []task{{ID: 3, Kind: "status"}}}
+	f := &fakeRunner{stdout: map[string]string{"list": `{"count":0,"items":[]}`, "show": `{"installed":false}`},
+		fail: map[string]string{"--json": "doctor found problems\n"}}
+	a, done := newTestAgent(t, p, f)
+	defer done()
+	_, _ = a.step(context.Background())
+	_, _ = a.step(context.Background())
+	rs := results(t, p.requests[1]["results"])
+	var st map[string]json.RawMessage
+	if len(rs) != 1 || !rs[0].OK || json.Unmarshal(rs[0].Output, &st) != nil {
+		t.Fatalf("status result %+v", rs)
+	}
+	if string(st["nodes"]) != `{"count":0,"items":[]}` || string(st["snell"]) != `{"installed":false}` || string(st["agent_version"]) != `"0.4.0"` {
+		t.Fatalf("status: %s", rs[0].Output)
 	}
 }
 

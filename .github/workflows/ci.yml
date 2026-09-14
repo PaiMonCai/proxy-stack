@@ -117,6 +117,9 @@ jobs:
           - { os: debian,   suite: retry }
           - { os: alpine,   suite: retry }
           - { os: alma8,    suite: retry }
+          - { os: debian,   suite: panelside }
+          - { os: alpine,   suite: panelside }
+          - { os: rocky9,   suite: panelside }
     steps:
       - uses: actions/checkout@v4
       - name: tests/integration/container.sh ${{ matrix.os }} ${{ matrix.suite }}

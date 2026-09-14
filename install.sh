@@ -86,10 +86,16 @@ install_symlink() {
     log_ok "$(t install.cmd_created "$PSM_ROOT/manager.sh")"
 }
 
+# PSM_UNATTENDED=1 (bootstrap.sh --panel … --join …): no questions and no menu
+# at the end; the language comes from PSM_LANG (English by default).
 main() {
     banner
     # 首次安装时选择界面语言（写入 state_set psm_lang，随后菜单/日志按此语言显示）。
-    i18n_pick_lang
+    if [[ -n "${PSM_UNATTENDED:-}" ]]; then
+        i18n_set_lang "${PSM_LANG:-en}"
+    else
+        i18n_pick_lang
+    fi
     check_requirements
     install_base_packages
     setup_directories
@@ -99,6 +105,7 @@ main() {
     echo ""
     log_ok "$(t install.done)"
     echo ""
+    [[ -z "${PSM_UNATTENDED:-}" ]] || return 0
     exec bash "$PSM_ROOT/manager.sh"
 }
 

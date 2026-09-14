@@ -1,11 +1,17 @@
 // psm-agent connects a server to the PSM panel.
 //
 // It opens no port, not even on loopback: it makes one HTTPS request to the
-// panel at a time, which carries the results of its last tasks and brings back
-// new ones, then waits as long as the panel says (30 s when idle, 3 s while
-// there is work). Each task is run as a psm command with its arguments passed as
-// an argv array (never through a shell) and checked against allowlists first,
-// so the panel can make the server do nothing the psm command line cannot.
+// panel at a time, which carries the results of its last tasks (and, every
+// ten minutes, the traffic counters) and brings back new ones, then waits as
+// long as the panel says (30 s when idle, 3 s while there is work). Each task
+// is run as a psm command with its arguments passed as an argv array (never
+// through a shell) and checked against allowlists first, so the panel can make
+// the server do nothing the psm command line cannot.
+//
+// Tasks: node.add (installing the core first when the server has never run
+// it), node.update, node.delete, node.export, standalone.install and
+// standalone.remove (Snell / ss-rust), traffic.set, traffic.reset,
+// traffic.report (send the counters with the next sync), status.
 //
 //	psm-agent join -panel https://psm.example.com -token <join token>
 //	psm-agent run
@@ -27,19 +33,25 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 )
 
-const agentVersion = "0.3.0"
+const agentVersion = "0.4.0"
 
 const (
 	commandTimeout  = 120 * time.Second // one psm command
+	installTimeout  = 15 * time.Minute  // installing a core or a standalone server
 	requestTimeout  = 30 * time.Second  // one request to the panel
 	maxTaskData     = 64 << 10          // a task's node settings
 	maxResponse     = 1 << 20           // a response from the panel
+	maxReport       = 512 << 10         // a status report sent to the panel
 	defaultInterval = 30 * time.Second  // the panel says how long to wait; this is the fallback
+	trafficEvery    = 10 * time.Minute  // how often the traffic counters go to the panel
+	versionEvery    = time.Hour         // how often PSM's version is looked up again
+	maxLimitBytes   = 1 << 53           // a traffic limit (8 PiB)
 	defaultConfig   = "/etc/psm/agent.json"
 )
 
@@ -51,10 +63,21 @@ var protocols = map[string]bool{
 	"vless": true, "tuic": true, "wireguard": true,
 }
 
+// the standalone servers (`psm standalone`)
+var standalones = map[string]bool{"snell": true, "ss2022": true}
+
+var ssMethods = map[string]bool{
+	"2022-blake3-aes-128-gcm": true, "2022-blake3-aes-256-gcm": true, "2022-blake3-chacha20-poly1305": true,
+}
+
+var snellVersions = map[string]bool{"4": true, "5": true, "6": true}
+
 var (
 	// a tag never starts with "-": psm would read "--show-secrets" as an option
 	tagRe  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,47}$`)
 	hostRe = regexp.MustCompile(`^([A-Za-z0-9-]{1,63}\.)*[A-Za-z0-9-]{1,63}$|^[0-9a-fA-F:.]+$`)
+	pskRe  = regexp.MustCompile(`^[A-Za-z0-9+/=_][A-Za-z0-9+/=_-]{7,127}$`)
+	keyRe  = regexp.MustCompile(`^[A-Za-z0-9+/]{16,86}={0,2}$`)
 )
 
 // ── config ────────────────────────────────────────────────────────────────────
@@ -181,22 +204,25 @@ func join(ctx context.Context, cfgPath, panel, joinToken string, allowHTTP bool)
 // ── tasks ─────────────────────────────────────────────────────────────────────
 
 type task struct {
-	ID       int64           `json:"id"`
-	Kind     string          `json:"kind"`
-	Core     string          `json:"core,omitempty"`
-	Protocol string          `json:"protocol,omitempty"`
-	Tag      string          `json:"tag,omitempty"`
-	Data     json.RawMessage `json:"data,omitempty"`
-	Server   string          `json:"server,omitempty"` // the address in exported links
-	Format   string          `json:"format,omitempty"` // uri | surge
+	ID         int64           `json:"id"`
+	Kind       string          `json:"kind"`
+	Core       string          `json:"core,omitempty"`
+	Protocol   string          `json:"protocol,omitempty"` // PSM's protocol; snell / ss2022 for standalone.*
+	Tag        string          `json:"tag,omitempty"`      // the node's tag (its name in the panel)
+	Data       json.RawMessage `json:"data,omitempty"`     // node settings
+	Server     string          `json:"server,omitempty"`   // the address in exported links
+	Format     string          `json:"format,omitempty"`   // uri | surge
+	LimitBytes int64           `json:"limit_bytes,omitempty"`
+	ResetDay   int             `json:"reset_day,omitempty"`
 }
 
 type result struct {
-	TaskID int64           `json:"task_id"`
-	OK     bool            `json:"ok"`
-	Output json.RawMessage `json:"output,omitempty"`
-	Link   string          `json:"link,omitempty"`
-	Error  string          `json:"error,omitempty"`
+	TaskID   int64           `json:"task_id"`
+	OK       bool            `json:"ok"`
+	Output   json.RawMessage `json:"output,omitempty"`
+	Link     string          `json:"link,omitempty"`
+	Outbound json.RawMessage `json:"outbound,omitempty"` // the node as a sing-box client outbound
+	Error    string          `json:"error,omitempty"`
 }
 
 // runner runs psm with the given arguments (and stdin, when not nil).
@@ -217,10 +243,13 @@ func execRunner(bin string) runner {
 }
 
 type agent struct {
-	cfg      *config
-	run      runner
-	hostname string
-	pending  []result // results not yet delivered to the panel
+	cfg         *config
+	run         runner
+	hostname    string
+	pending     []result  // results not yet delivered to the panel
+	lastTraffic time.Time // when the traffic counters last went to the panel
+	psmVersion  string
+	versionAt   time.Time
 }
 
 func rejected(t task, why string) result {
@@ -252,9 +281,75 @@ func nodeData(t task) (map[string]any, string) {
 	return obj, ""
 }
 
+func goodPort(v any) (int, bool) {
+	p, ok := v.(float64)
+	return int(p), ok && p == float64(int(p)) && p >= 1 && p <= 65535
+}
+
+// text reads a setting that may have been sent as a string or a number.
+func text(obj map[string]any, key string) string {
+	switch v := obj[key].(type) {
+	case string:
+		return v
+	case float64:
+		return strconv.FormatFloat(v, 'f', -1, 64)
+	}
+	return ""
+}
+
+// standaloneArgs turns a standalone.install task into the psm arguments.
+func standaloneArgs(t task) ([]string, string) {
+	obj, why := nodeData(t)
+	if why != "" {
+		return nil, why
+	}
+	port, ok := goodPort(obj["port"])
+	if !ok {
+		return nil, "bad port"
+	}
+	args := []string{"standalone", "install", t.Protocol, "--port", strconv.Itoa(port), "--json"}
+	switch t.Protocol {
+	case "snell":
+		v := text(obj, "version")
+		if v == "" {
+			v = "5"
+		}
+		if !snellVersions[v] {
+			return nil, "bad Snell version " + v
+		}
+		args = append(args, "--version", v)
+		if psk := text(obj, "psk"); psk != "" {
+			if !pskRe.MatchString(psk) {
+				return nil, "bad PSK"
+			}
+			args = append(args, "--psk", psk)
+		}
+	case "ss2022":
+		m := text(obj, "method")
+		if m == "" {
+			m = "2022-blake3-aes-128-gcm"
+		}
+		if !ssMethods[m] {
+			return nil, "bad method " + m
+		}
+		args = append(args, "--method", m)
+		if pw := text(obj, "password"); pw != "" {
+			if !keyRe.MatchString(pw) {
+				return nil, "bad password (a base64 key)"
+			}
+			args = append(args, "--password", pw)
+		}
+	}
+	return args, ""
+}
+
 // psm runs one command; on failure the error is psm's own last line.
 func (a *agent) psm(ctx context.Context, stdin []byte, args ...string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(ctx, commandTimeout)
+	return a.psmFor(ctx, commandTimeout, stdin, args...)
+}
+
+func (a *agent) psmFor(ctx context.Context, timeout time.Duration, stdin []byte, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	out, errOut, err := a.run(ctx, stdin, args...)
 	if err != nil {
@@ -266,25 +361,76 @@ func (a *agent) psm(ctx context.Context, stdin []byte, args ...string) ([]byte, 
 	return out, nil
 }
 
-func (a *agent) export(ctx context.Context, t task) (string, error) {
+// jsonPart runs a read-only command and returns its JSON output, or null. psm
+// doctor exits non-zero when a check fails, yet its report is still wanted.
+func (a *agent) jsonPart(ctx context.Context, args ...string) json.RawMessage {
+	ctx, cancel := context.WithTimeout(ctx, commandTimeout)
+	defer cancel()
+	out, _, _ := a.run(ctx, nil, args...)
+	out = bytes.TrimSpace(out)
+	if len(out) == 0 || !json.Valid(out) {
+		return json.RawMessage("null")
+	}
+	return json.RawMessage(out)
+}
+
+// export returns a node's client link and, when sing-box has a client
+// outbound for it, that outbound. standalone: the standalone server named by
+// t.Protocol, shown in links as PSM-<tag>.
+func (a *agent) export(ctx context.Context, t task, standalone bool) (string, json.RawMessage, error) {
 	format := t.Format
 	if format == "" {
 		format = "uri"
 	}
 	if format != "uri" && format != "surge" {
-		return "", errors.New("rejected by psm-agent: bad export format " + format)
+		return "", nil, errors.New("rejected by psm-agent: bad export format " + format)
 	}
 	if t.Server == "" || len(t.Server) > 253 || !hostRe.MatchString(t.Server) {
-		return "", errors.New("rejected by psm-agent: bad server address")
+		return "", nil, errors.New("rejected by psm-agent: bad server address")
 	}
-	out, err := a.psm(ctx, nil, "node", "export", t.Core, t.Protocol, t.Tag, "--format", format, "--server", t.Server)
-	return strings.TrimSpace(string(out)), err
+	base := []string{"node", "export", t.Core, t.Protocol, t.Tag}
+	if standalone {
+		base = []string{"standalone", "export", t.Protocol, "--name", "PSM-" + t.Tag}
+	}
+	with := func(f string) []string {
+		return append(append([]string{}, base...), "--format", f, "--server", t.Server)
+	}
+	out, err := a.psm(ctx, nil, with(format)...)
+	if err != nil {
+		return "", nil, err
+	}
+	var ob json.RawMessage
+	if sb, err := a.psm(ctx, nil, with("singbox")...); err == nil {
+		if sb = bytes.TrimSpace(sb); len(sb) > 0 && json.Valid(sb) {
+			ob = json.RawMessage(sb)
+		}
+	}
+	return strings.TrimSpace(string(out)), ob, nil
+}
+
+// status gathers what the panel shows for a server.
+func (a *agent) status(ctx context.Context) json.RawMessage {
+	raw, _ := json.Marshal(map[string]any{
+		"psm_version":   a.version(ctx, true),
+		"agent_version": agentVersion,
+		"cores":         a.jsonPart(ctx, "core", "list", "--json"),
+		"doctor":        a.jsonPart(ctx, "doctor", "--json"),
+		"nodes":         a.jsonPart(ctx, "node", "list", "--json"),
+		"traffic":       a.jsonPart(ctx, "traffic", "list", "--json"),
+		"snell":         a.jsonPart(ctx, "standalone", "show", "snell", "--json"),
+		"ss2022":        a.jsonPart(ctx, "standalone", "show", "ss2022", "--json"),
+	})
+	if len(raw) > maxReport {
+		raw, _ = json.Marshal(map[string]any{"error": "status report too large"})
+	}
+	return raw
 }
 
 // execute runs one task and says how it went. A task that fails the checks
 // never reaches psm.
 func (a *agent) execute(ctx context.Context, t task) result {
 	r := result{TaskID: t.ID}
+	fail := func(err error) result { r.Error = err.Error(); return r }
 	switch t.Kind {
 	case "node.add":
 		if why := checkNode(t, false); why != "" {
@@ -298,19 +444,22 @@ func (a *agent) execute(ctx context.Context, t task) result {
 		if !tagRe.MatchString(tag) {
 			return rejected(t, "bad tag "+tag)
 		}
-		if p, _ := obj["port"].(float64); p != float64(int(p)) || p < 1 || p > 65535 {
+		if _, ok := goodPort(obj["port"]); !ok {
 			return rejected(t, "bad port")
+		}
+		// a server that has never run this core gets it first
+		if _, err := a.psmFor(ctx, installTimeout, nil, "core", "install", t.Core, "--if-missing", "--json"); err != nil {
+			return fail(fmt.Errorf("installing %s: %w", t.Core, err))
 		}
 		out, err := a.psm(ctx, t.Data, "node", "add", t.Core, t.Protocol, "--input", "-", "--json")
 		if err != nil {
-			r.Error = err.Error()
-			return r
+			return fail(err)
 		}
 		r.OK, r.Output = true, jsonOrNil(out)
 		if t.Server != "" { // the client link, for the panel's subscription
 			t.Tag = tag
-			if link, err := a.export(ctx, t); err == nil {
-				r.Link = link
+			if link, ob, err := a.export(ctx, t, false); err == nil {
+				r.Link, r.Outbound = link, ob
 			} else {
 				log.Printf("task %d: node added, export failed: %v", t.ID, err)
 			}
@@ -324,37 +473,99 @@ func (a *agent) execute(ctx context.Context, t task) result {
 		}
 		out, err := a.psm(ctx, t.Data, "node", "update", t.Core, t.Protocol, t.Tag, "--input", "-", "--json")
 		if err != nil {
-			r.Error = err.Error()
-			return r
+			return fail(err)
 		}
 		r.OK, r.Output = true, jsonOrNil(out)
+		if t.Server != "" {
+			if link, ob, err := a.export(ctx, t, false); err == nil {
+				r.Link, r.Outbound = link, ob
+			}
+		}
 	case "node.delete":
 		if why := checkNode(t, true); why != "" {
 			return rejected(t, why)
 		}
 		out, err := a.psm(ctx, nil, "node", "delete", t.Core, t.Protocol, t.Tag, "--yes", "--if-exists", "--json")
 		if err != nil {
-			r.Error = err.Error()
-			return r
+			return fail(err)
 		}
 		r.OK, r.Output = true, jsonOrNil(out)
 	case "node.export":
 		if why := checkNode(t, true); why != "" {
 			return rejected(t, why)
 		}
-		link, err := a.export(ctx, t)
+		link, ob, err := a.export(ctx, t, false)
 		if err != nil {
-			r.Error = err.Error()
-			return r
+			return fail(err)
 		}
-		r.OK, r.Link = true, link
-	case "status":
-		out, err := a.psm(ctx, nil, "node", "list", "--json")
+		r.OK, r.Link, r.Outbound = true, link, ob
+	case "standalone.install":
+		if !standalones[t.Protocol] {
+			return rejected(t, "not a standalone server: "+t.Protocol)
+		}
+		if !tagRe.MatchString(t.Tag) {
+			return rejected(t, "bad tag "+t.Tag)
+		}
+		args, why := standaloneArgs(t)
+		if why != "" {
+			return rejected(t, why)
+		}
+		out, err := a.psmFor(ctx, installTimeout, nil, args...)
 		if err != nil {
-			r.Error = err.Error()
-			return r
+			return fail(err)
 		}
 		r.OK, r.Output = true, jsonOrNil(out)
+		if t.Server != "" {
+			if link, ob, err := a.export(ctx, t, true); err == nil {
+				r.Link, r.Outbound = link, ob
+			} else {
+				log.Printf("task %d: %s installed, export failed: %v", t.ID, t.Protocol, err)
+			}
+		}
+	case "standalone.remove":
+		if !standalones[t.Protocol] {
+			return rejected(t, "not a standalone server: "+t.Protocol)
+		}
+		out, err := a.psmFor(ctx, installTimeout, nil, "standalone", "remove", t.Protocol, "--yes", "--json")
+		if err != nil {
+			return fail(err)
+		}
+		r.OK, r.Output = true, jsonOrNil(out)
+	case "traffic.set":
+		if !tagRe.MatchString(t.Tag) {
+			return rejected(t, "bad tag "+t.Tag)
+		}
+		if t.LimitBytes < 0 || t.LimitBytes > maxLimitBytes {
+			return rejected(t, "bad traffic limit")
+		}
+		if t.ResetDay < 0 || t.ResetDay > 28 {
+			return rejected(t, "bad reset day")
+		}
+		args := []string{"traffic", "set", t.Tag, "--limit-bytes", strconv.FormatInt(t.LimitBytes, 10), "--json"}
+		if t.ResetDay > 0 {
+			args = append(args, "--reset-day", strconv.Itoa(t.ResetDay))
+		}
+		out, err := a.psm(ctx, nil, args...)
+		if err != nil {
+			return fail(err)
+		}
+		r.OK, r.Output = true, jsonOrNil(out)
+		a.lastTraffic = time.Time{} // the next sync carries the counters
+	case "traffic.reset":
+		if !tagRe.MatchString(t.Tag) {
+			return rejected(t, "bad tag "+t.Tag)
+		}
+		out, err := a.psm(ctx, nil, "traffic", "reset", t.Tag, "--json")
+		if err != nil {
+			return fail(err)
+		}
+		r.OK, r.Output = true, jsonOrNil(out)
+		a.lastTraffic = time.Time{}
+	case "traffic.report": // the panel's 流量 page asks for the counters now
+		a.lastTraffic = time.Time{}
+		r.OK = true
+	case "status":
+		r.OK, r.Output = true, a.status(ctx)
 	default:
 		return rejected(t, "unsupported task kind "+t.Kind)
 	}
@@ -373,10 +584,22 @@ func lastLine(b []byte) string {
 	return strings.TrimSpace(lines[len(lines)-1])
 }
 
+// version is PSM's version ("2026-09-15 abc1234"), looked up once an hour.
+func (a *agent) version(ctx context.Context, fresh bool) string {
+	if fresh || time.Since(a.versionAt) >= versionEvery {
+		if out, err := a.psm(ctx, nil, "version"); err == nil {
+			a.psmVersion = strings.TrimSpace(string(out))
+		}
+		a.versionAt = time.Now()
+	}
+	return a.psmVersion
+}
+
 // ── the sync loop ─────────────────────────────────────────────────────────────
 
-// step is one sync: deliver pending results, take and run new tasks. It says
-// how long to wait before the next one. Results survive a failed sync.
+// step is one sync: deliver pending results (and, when due, the traffic
+// counters), take and run new tasks. It says how long to wait before the next
+// one. Results survive a failed sync.
 func (a *agent) step(ctx context.Context) (time.Duration, error) {
 	var resp struct {
 		Interval int    `json:"interval"`
@@ -386,13 +609,25 @@ func (a *agent) step(ctx context.Context) (time.Duration, error) {
 	if a.pending == nil {
 		req["results"] = []result{}
 	}
+	if v := a.version(ctx, false); v != "" {
+		req["psm_version"] = v
+	}
+	trafficDue := time.Since(a.lastTraffic) >= trafficEvery
+	if trafficDue {
+		if tr := a.jsonPart(ctx, "traffic", "list", "--json"); string(tr) != "null" {
+			req["traffic"] = tr
+		}
+	}
 	if err := post(ctx, a.cfg.Panel, "/api/agent/sync", a.cfg.Token, req, &resp); err != nil {
 		return 0, err
 	}
 	a.pending = nil
+	if trafficDue {
+		a.lastTraffic = time.Now()
+	}
 	for _, t := range resp.Tasks {
 		r := a.execute(ctx, t)
-		log.Printf("task %d %s %s/%s: ok=%v %s", t.ID, t.Kind, t.Core, t.Protocol, r.OK, r.Error)
+		log.Printf("task %d %s %s/%s %s: ok=%v %s", t.ID, t.Kind, t.Core, t.Protocol, t.Tag, r.OK, r.Error)
 		a.pending = append(a.pending, r)
 	}
 	if len(a.pending) > 0 {

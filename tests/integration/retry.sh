@@ -27,8 +27,8 @@ missing=$(grep -rnE 'curl [^#]*(-o |\| *sh|/releases|api\.github\.com|_INSTALLER
               lib update.sh | grep -v 'PSM_DL' | grep -v '^lib/vps_test.sh:' | grep -v -- '-o /dev/null' || true)
 chk "no download without PSM_DL" test -z "$missing"
 [[ -z "$missing" ]] || echo "$missing" | sed 's/^/       /'
-chk "bootstrap.sh retries its download" grep -q 'curl --retry 3 --retry-delay 2 --connect-timeout 15 -fsSL' bootstrap.sh
-chk "PSM_DL is defined once common.sh is loaded" bash -c 'source lib/common.sh && [[ "${PSM_DL[*]}" == "--retry 3 --retry-delay 2 --connect-timeout 15" ]]'
+chk "bootstrap.sh retries its download" grep -q "curl --retry 5 --connect-timeout 15 -fsSL" bootstrap.sh
+chk "PSM_DL is defined once common.sh is loaded" bash -c 'source lib/common.sh && [[ "${PSM_DL[*]}" == "--retry 5 --connect-timeout 15" ]]'
 
 sec "a flaky stand-in for GitHub"
 # the Alpine image has no curl until PSM installs it; python3 runs the stand-in
@@ -72,8 +72,8 @@ chk "without retries a 500 fails the download" bash -c "! curl -fsSL $F/plain/on
 chk "… after one request" test "$(hits /plain/once)" = 1
 chk "with PSM_DL the third try gets through" bash -c "source lib/common.sh && curl \"\${PSM_DL[@]}\" -fsSL $F/plain/twice -o /tmp/twice && grep -qx ok /tmp/twice"
 chk "… after exactly three requests" test "$(hits /plain/twice)" = 3
-chk "a lasting 500 still fails, after 1 + 3 tries" bash -c "source lib/common.sh && ! curl \"\${PSM_DL[@]}\" -fsSL $F/always/x -o /tmp/always"
-chk "… and no more" test "$(hits /always/x)" = 4
+chk "a lasting 500 still fails, after 1 + 5 tries" bash -c "source lib/common.sh && ! curl \"\${PSM_DL[@]}\" -fsSL $F/always/x -o /tmp/always"
+chk "… and no more" test "$(hits /always/x)" = 6
 
 sec "real installs through the flaky stand-in"
 chk "sing-box installs" bash -c "source lib/singbox/core.sh && SB_RELEASES=$F/SagerNet/sing-box/releases PSM_SB_TAG=v1.14.0 sb_install <<< \$'1\nn\n0\n0\n'"

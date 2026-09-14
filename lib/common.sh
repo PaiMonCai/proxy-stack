@@ -225,10 +225,20 @@ ensure_modern_jq() {
 # GitHub (and the other hosts PSM downloads from) now and then answers 500 or
 # times out for a moment, and one such answer used to fail a whole install.
 # Every download of a core, a tool, an installer or a data file passes these:
-# curl retries timeouts and HTTP 408, 429, 500, 502, 503 and 504 three times
-# (2 s, 4 s, 8 s apart), and truncates a partly written -o file before it does.
+# curl retries timeouts and HTTP 408, 429, 500, 502, 503 and 504 five times,
+# backing off 1, 2, 4, 8 and 16 s (about 30 s: GitHub has answered 504 for
+# longer than 15 s in CI), and truncates a partly written -o file before it
+# does. No --retry-delay: a fixed delay would turn the backoff off.
 # bootstrap.sh spells the same flags out: it runs before this file exists.
-PSM_DL=(--retry 3 --retry-delay 2 --connect-timeout 15)
+PSM_DL=(--retry 5 --connect-timeout 15)
+
+# ── PSM's own version ────────────────────────────────────────────────────────
+# PSM has no release numbers: its version is the date and commit of the checkout.
+psm_version() {
+    local v
+    v=$(git -C "${PSM_ROOT:-/opt/psm}" log -1 --format='%cs %h' 2>/dev/null || true)
+    printf '%s\n' "${v:-unknown}"
+}
 
 # ── Latest release of a GitHub project ───────────────────────────────────────
 # The /releases/latest redirect comes first: api.github.com allows 60 requests
@@ -791,8 +801,9 @@ is_installed() { command -v "$1" &>/dev/null; }
 # Package providing command <cmd>, where a distro names it differently.
 _pkg_name() {
     case "${PKG_MGR}:$1" in
-        apk:qrencode) echo "libqrencode-tools" ;;
-        *)            echo "$1" ;;
+        apk:qrencode)       echo "libqrencode-tools" ;;
+        apt:xz|apt-get:xz)  echo "xz-utils" ;;
+        *)                  echo "$1" ;;
     esac
 }
 

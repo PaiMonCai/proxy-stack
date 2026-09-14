@@ -206,8 +206,9 @@ _trf_checkpoint_all() {
     local now; now=$(TZ="Asia/Hong_Kong" date '+%Y-%m-%dT%H:%M:%S')
 
     while IFS= read -r tag; do
+        # limit 0 = no limit: counted only when enrolled to be metered (`psm traffic set`)
         local limit; limit=$(_trf_get "$tag" "limit_bytes")
-        [[ "${limit:-0}" -le 0 ]] && continue
+        [[ "${limit:-0}" -le 0 && "$(_trf_get "$tag" "meter")" != "true" ]] && continue
 
         local source; source=$(_trf_get "$tag" "source"); source="${source:-xray}"
 

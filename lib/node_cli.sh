@@ -31,7 +31,7 @@ Usage:
   psm node delete CORE PROTO TAG --yes
                [--if-exists] [--store-only] [--json]
   psm node export CORE PROTO TAG
-               [--server HOST] [--format uri|json|surge]
+               [--server HOST] [--format uri|json|surge|singbox]
 
 Cores: xray, sing-box (alias: singbox), mihomo
 Protocols:
@@ -1556,6 +1556,13 @@ _node_cli_cmd_export() {
             [[ "$proto" == "snell" || "$proto" == "ss2022" ]] \
                 || { _node_cli_err '--format surge is only available for Snell and SS2022'; return 2; }
             _node_cli_export_surge "$n" "$server" "$proto"
+            ;;
+        singbox|sing-box)
+            # The node as one sing-box client outbound (the PSM panel's sing-box subscription)
+            declare -f _sub_sb_outbound &>/dev/null || source "$LIB_DIR/subscribe.sh"
+            local ob; ob=$(_sub_sb_outbound "$core" "$proto" "$n" "$server" "$tag" || true)
+            [[ -n "$ob" ]] || { _node_cli_err "$core/$proto has no sing-box client outbound; use --format uri"; return 2; }
+            printf '%s\n' "$ob" | jq -c '.'
             ;;
         ech)
             # The ECH config clients need (mihomo ech-opts.config); not part of any share link

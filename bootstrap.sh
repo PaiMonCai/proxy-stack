@@ -29,7 +29,7 @@ if [ -z "${BASH_VERSION:-}" ]; then
     esac
     PSM_BOOTSTRAP_TMP="$(mktemp)" || exit 1
     export PSM_BOOTSTRAP_TMP
-    curl --retry 3 --retry-delay 2 --connect-timeout 15 -fsSL "${PSM_BOOTSTRAP_URL:-https://psm.jinqians.com}" -o "$PSM_BOOTSTRAP_TMP" \
+    curl --retry 5 --connect-timeout 15 -fsSL "${PSM_BOOTSTRAP_URL:-https://psm.jinqians.com}" -o "$PSM_BOOTSTRAP_TMP" \
         || { rm -f "$PSM_BOOTSTRAP_TMP"; exit 1; }
     if (: </dev/tty) 2>/dev/null; then
         exec bash "$PSM_BOOTSTRAP_TMP" "$@" </dev/tty
@@ -64,6 +64,24 @@ if [[ -z "$_bt_lang" ]]; then
     case "${LC_ALL:-}${LC_MESSAGES:-}${LANG:-}" in *[Zz][Hh]*) _bt_lang=zh ;; *) _bt_lang=en ;; esac
 fi
 bt() { [[ "$_bt_lang" == zh ]] && printf '%s' "$1" || printf '%s' "$2"; }
+
+# ── Arguments ─────────────────────────────────────────────────────────────────
+# --panel URL --join TOKEN (the PSM panel's install command): after installing
+# or updating PSM, connect this server to the panel (psm agent join). The
+# install then asks no questions and opens no menu.
+PSM_PANEL=""; PSM_JOIN=""
+while (( $# )); do
+    case "$1" in
+        --panel) PSM_PANEL="${2:-}"; shift; shift || true ;;
+        --join)  PSM_JOIN="${2:-}";  shift; shift || true ;;
+        *) shift ;;   # other arguments are ignored, as before
+    esac
+done
+if [[ -n "$PSM_PANEL" || -n "$PSM_JOIN" ]] && [[ -z "$PSM_PANEL" || -z "$PSM_JOIN" ]]; then
+    echo "$(bt "--panel 和 --join 要一起使用（面板给出的安装命令里两个都有）。" "--panel and --join go together (the panel's install command has both).")" >&2
+    exit 2
+fi
+export PSM_LANG="${PSM_LANG:-$_bt_lang}"
 
 banner() {
     local BC='\033[96m' BB='\033[94m' WH='\033[97m' DM='\033[2m'
@@ -143,9 +161,18 @@ _psm_slim() {   # <repo dir>
     fi
 }
 
+# ── Joining a panel ───────────────────────────────────────────────────────────
+# psm agent join downloads psm-agent (checked against the release's SHA256SUMS),
+# trades the one-time token for this server's own and runs it as a service. It
+# opens no port: it connects out to the panel.
+_psm_join_panel() {
+    log_step "$(bt "正在接入面板 ${PSM_PANEL} ..." "Connecting to the panel at ${PSM_PANEL} ...")"
+    bash "$PSM_DIR/manager.sh" agent join --panel "$PSM_PANEL" --token "$PSM_JOIN"
+}
+
 # ── Clone or update ───────────────────────────────────────────────────────────
 if [[ -d "$PSM_DIR/.git" ]]; then
-    log_step "$(bt "正在更新已安装的 PSM（$PSM_DIR）..." "Updating existing PSM installation at $PSM_DIR ...")"
+    log_step "$(bt "正在更新已安装的 PSM（${PSM_DIR}）..." "Updating existing PSM installation at ${PSM_DIR} ...")"
     # 仓库里只有脚本，用户数据在 /etc/psm。手动改过的脚本会让 git pull 拒绝合并、
     # 整次更新直接中止 —— 先把改动存成补丁（不丢），再还原到 HEAD。未跟踪文件不动。
     # 安装/更新都会 chmod +x 脚本，仓库里记为 100644 的文件因此显示为"已修改"，
@@ -162,7 +189,7 @@ if [[ -d "$PSM_DIR/.git" ]]; then
     # which would download the READMEs and screenshots the slim checkout skips.
     if ! git -C "$PSM_DIR" pull --ff-only --no-stat; then
         # 历史分叉（本地提交、被改写的浅克隆等）：以远端为准，本地提交仍可从 git reflog 找回
-        log_warn "$(bt "无法快进更新，正在重置到远端 $PSM_BRANCH（本地提交可用 git reflog 找回）..." "Cannot fast-forward; resetting to remote $PSM_BRANCH (local commits stay in git reflog)...")"
+        log_warn "$(bt "无法快进更新，正在重置到远端 ${PSM_BRANCH}（本地提交可用 git reflog 找回）..." "Cannot fast-forward; resetting to remote ${PSM_BRANCH} (local commits stay in git reflog)...")"
         git -C "$PSM_DIR" fetch origin "$PSM_BRANCH"
         git -C "$PSM_DIR" reset -q --hard FETCH_HEAD
     fi
@@ -172,7 +199,12 @@ if [[ -d "$PSM_DIR/.git" ]]; then
     psm_cmd_target="$(readlink -f /usr/local/bin/psm 2>/dev/null || true)"
     if [[ ! -x /usr/local/bin/psm || "$psm_cmd_target" != "$PSM_DIR/manager.sh" || ! -d "$PSM_DIR/config" ]]; then
         log_warn "$(bt "现有安装不完整，正在运行安装程序修复..." "Existing checkout is incomplete; running installer to repair it...")"
-        exec bash "$PSM_DIR/install.sh"
+        [[ -n "$PSM_PANEL" ]] || exec bash "$PSM_DIR/install.sh"
+        PSM_UNATTENDED=1 bash "$PSM_DIR/install.sh"
+    fi
+    if [[ -n "$PSM_PANEL" ]]; then
+        _psm_join_panel
+        exit $?
     fi
 
     echo ""
@@ -188,4 +220,9 @@ _psm_slim "$PSM_DIR"
 log_ok "$(bt "仓库已下载。" "Repository downloaded.")"
 
 # ── Hand off to the real installer ───────────────────────────────────────────
+if [[ -n "$PSM_PANEL" ]]; then
+    PSM_UNATTENDED=1 bash "$PSM_DIR/install.sh"
+    _psm_join_panel
+    exit $?
+fi
 exec bash "$PSM_DIR/install.sh"

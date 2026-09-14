@@ -1,0 +1,44 @@
+name: psm-agent release
+
+# Pushing a tag agent-vX.Y.Z builds psm-agent for Linux amd64, arm64 and armv7
+# and publishes the binaries with SHA256SUMS as a GitHub release, which
+# `psm agent join` (lib/agent.sh, which pins the version) downloads. It runs on
+# GitHub's runners: tags are pushed by the owner only, never from a fork.
+on:
+  push:
+    tags: ['agent-v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: github.repository == 'jinqians/proxy-stack'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: the tag, agent/main.go and lib/agent.sh name the same version
+        run: |
+          v="${GITHUB_REF_NAME#agent-v}"
+          grep -q "^const agentVersion = \"$v\"\$" agent/main.go
+          grep -q "^PSM_AGENT_VERSION=\"$v\"\$" lib/agent.sh
+      - name: gofmt, vet, test, static builds (golang container)
+        run: |
+          mkdir -p dist
+          docker run --rm -v "$PWD/agent:/src:ro" -v "$PWD/dist:/dist" golang:1.27-alpine sh -c '
+            set -e
+            cp -a /src /w && cd /w
+            test -z "$(gofmt -l .)"
+            go vet ./... && go test -count=1 ./...
+            for t in amd64:amd64 arm64:arm64 arm:armv7; do
+              CGO_ENABLED=0 GOARCH=${t%%:*} GOARM=7 go build -trimpath -ldflags "-s -w" -o /dist/psm-agent-linux-${t##*:} .
+            done
+            cd /dist && sha256sum psm-agent-linux-* > SHA256SUMS && cat SHA256SUMS'
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "psm-agent ${GITHUB_REF_NAME#agent-v}" \
+            --notes "psm-agent for the PSM panel (jinqians/psm-panel). Installed by \`psm agent join\`, which checks SHA256SUMS."

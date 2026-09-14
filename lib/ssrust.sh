@@ -53,12 +53,13 @@ _ssrust_free_port() {
     echo "$p"
 }
 
-_ssrust_native_install() {
-    local mode="${1:-install}"
-    ensure_pkg_deps curl jq tar xz openssl
-    require_cmd curl jq tar xz openssl
-
-    local triple
+# The static musl ssserver of the latest shadowsocks-rust release, installed as
+# $SS_BIN (it runs on glibc and musl alike). Prints the release tag. Also used
+# by `psm standalone install ss2022` (lib/standalone_cli.sh), which passes
+# "quiet": the menu's "no systemd here" step line would be wrong there.
+# shellcheck disable=SC2120  # "quiet" comes from lib/standalone_cli.sh only
+_ssrust_fetch_binary() {
+    local quiet="${1:-}" triple
     case "$(get_arch)" in
         amd64) triple="x86_64-unknown-linux-musl" ;;
         arm64) triple="aarch64-unknown-linux-musl" ;;
@@ -67,7 +68,7 @@ _ssrust_native_install() {
     local tag
     tag=$(gh_latest_tag shadowsocks/shadowsocks-rust)
     [[ "$tag" =~ ^v[0-9] ]] || tag="$SS_NATIVE_FALLBACK"
-    log_step "$(t common.native.installing ss-rust "$tag")"
+    [[ -n "$quiet" ]] || log_step "$(t common.native.installing ss-rust "$tag")" >&2
 
     local file="shadowsocks-${tag}.${triple}.tar.xz"
     local url="https://github.com/shadowsocks/shadowsocks-rust/releases/download/${tag}/${file}"
@@ -83,6 +84,15 @@ _ssrust_native_install() {
     rm -rf "$tmp"
     mkdir -p "$(dirname "$SS_CONF")"
     echo "${tag#v}" > "$(dirname "$SS_CONF")/ver.txt"
+    printf '%s' "$tag"
+}
+
+_ssrust_native_install() {
+    local mode="${1:-install}"
+    ensure_pkg_deps curl jq tar xz openssl
+    require_cmd curl jq tar xz openssl
+
+    _ssrust_fetch_binary >/dev/null || return 1
 
     if [[ "$mode" == "install" || ! -f "$SS_CONF" ]]; then
         local listen="0.0.0.0"

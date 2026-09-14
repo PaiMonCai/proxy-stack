@@ -70,6 +70,22 @@ run_i18n() {
     bash scripts/i18n-check.sh
 }
 
+# "$PSM_DIR（…" — in some locales bash reads the first byte of a multibyte
+# character as part of the variable name, and set -u then stops the script
+# ("PSM_DIR�: unbound variable", seen in bootstrap.sh). Brace such variables.
+run_var_boundaries() {
+    section "variables next to non-ASCII text"
+    local hits
+    hits=$(collect_shell_files | xargs -0 perl -ne \
+        'print "$ARGV:$.: $_" if !/^\s*#/ && /\$[A-Za-z_][A-Za-z0-9_]*[^\x00-\x7F]/; close ARGV if eof')
+    if [[ -n "$hits" ]]; then
+        printf '%s\n' "$hits"
+        echo 'write these as ${NAME}' >&2
+        return 1
+    fi
+    echo "no \$NAME directly before non-ASCII text"
+}
+
 run_tests() {
     section "config regression"
     bash tests/run.sh
@@ -78,11 +94,12 @@ run_tests() {
 case "${1:-all}" in
     all)
         run_syntax
+        run_var_boundaries
         run_shellcheck
         run_i18n
         run_tests
         ;;
-    syntax)     run_syntax ;;
+    syntax)     run_syntax; run_var_boundaries ;;
     shellcheck) run_shellcheck ;;
     i18n)       run_i18n ;;
     test|tests) run_tests ;;
