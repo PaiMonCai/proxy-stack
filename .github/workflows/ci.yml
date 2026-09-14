@@ -31,6 +31,25 @@ jobs:
             apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq shellcheck jq openssl >/dev/null
             cp -a /src /w && cd /w && bash scripts/ci.sh'
 
+  psm-api:
+    name: psm-api (go vet · test · amd64/arm64 builds)
+    if: github.repository == 'jinqians/proxy-stack'
+    runs-on: [self-hosted, linux, psm-vps]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: go vet, go test, static builds (golang container)
+        run: |
+          docker run --rm -v "$PWD/api:/src:ro" golang:1.27-alpine sh -c '
+            set -e
+            cp -a /src /w && cd /w
+            go vet ./...
+            go test -count=1 ./...
+            for arch in amd64 arm64; do
+              CGO_ENABLED=0 GOARCH=$arch go build -trimpath -ldflags "-s -w" -o /tmp/psm-api-$arch .
+            done
+            ls -l /tmp/psm-api-*'
+
   core-validate:
     name: generated configs vs real cores
     if: github.repository == 'jinqians/proxy-stack'
