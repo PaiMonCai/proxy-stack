@@ -51,7 +51,7 @@ hy2_install() {
     local tmp; tmp=$(mktemp)
 
     log_step "$(t hysteria2.downloading "$tag" "$hy2_arch")"
-    curl -fsSL -o "$tmp" "$url" || die "$(t hysteria2.download_fail "$url")"
+    curl "${PSM_DL[@]}" -fsSL -o "$tmp" "$url" || die "$(t hysteria2.download_fail "$url")"
     install -m 755 "$tmp" "$HY2_BIN"
     rm -f "$tmp"
 

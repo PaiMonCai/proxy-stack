@@ -72,7 +72,7 @@ _xray_resolve_tag() {
     [[ -n "${PSM_XRAY_TAG:-}" ]] && { printf '%s' "$PSM_XRAY_TAG"; return 0; }
     if [[ "$channel" == "preview" ]]; then
         log_step "$(t xray.fetching_preview)"
-        tag=$(curl -fsSL "https://api.github.com/repos/XTLS/Xray-core/releases?per_page=20" 2>/dev/null \
+        tag=$(curl "${PSM_DL[@]}" -fsSL "https://api.github.com/repos/XTLS/Xray-core/releases?per_page=20" 2>/dev/null \
               | jq -r 'map(select(.draft | not)) | .[0].tag_name // empty' || true)
         if [[ "$tag" =~ ^v[0-9] ]]; then
             log_warn "$(t xray.channel.preview_warn "$tag")"
@@ -117,7 +117,7 @@ xray_install() {
     local tmp_dir; tmp_dir=$(mktemp -d)
 
     log_step "$(t xray.downloading "$tag" "$xray_arch")"
-    curl -fsSL -o "$tmp_dir/$zip_name" "$url" \
+    curl "${PSM_DL[@]}" -fsSL -o "$tmp_dir/$zip_name" "$url" \
         || die "$(t xray.download_fail "$url")"
 
     unzip -q "$tmp_dir/$zip_name" -d "$tmp_dir/xray"

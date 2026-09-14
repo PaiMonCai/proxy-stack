@@ -206,8 +206,8 @@ ensure_modern_jq() {
     esac
     base="https://github.com/jqlang/jq/releases/download/jq-${PSM_JQ_VERSION}"
     mkdir -p "$dir"
-    if curl -fsSL -o "$dir/.jq.new" "$base/jq-linux-${arch}" \
-        && sums=$(curl -fsSL "$base/sha256sum.txt") \
+    if curl "${PSM_DL[@]}" -fsSL -o "$dir/.jq.new" "$base/jq-linux-${arch}" \
+        && sums=$(curl "${PSM_DL[@]}" -fsSL "$base/sha256sum.txt") \
         && [[ "$(sha256sum "$dir/.jq.new" | awk '{print $1}')" == \
               "$(awk -v f="jq-linux-${arch}" '$2 == f {print $1}' <<<"$sums")" ]] \
         && chmod 755 "$dir/.jq.new" && _jq_is_modern "$dir/.jq.new"; then
@@ -221,6 +221,15 @@ ensure_modern_jq() {
     return 0
 }
 
+# ── Downloads ────────────────────────────────────────────────────────────────
+# GitHub (and the other hosts PSM downloads from) now and then answers 500 or
+# times out for a moment, and one such answer used to fail a whole install.
+# Every download of a core, a tool, an installer or a data file passes these:
+# curl retries timeouts and HTTP 408, 429, 500, 502, 503 and 504 three times
+# (2 s, 4 s, 8 s apart), and truncates a partly written -o file before it does.
+# bootstrap.sh spells the same flags out: it runs before this file exists.
+PSM_DL=(--retry 3 --retry-delay 2 --connect-timeout 15)
+
 # ── Latest release of a GitHub project ───────────────────────────────────────
 # The /releases/latest redirect comes first: api.github.com allows 60 requests
 # an hour per IP without a token, which a few installs behind one address use
@@ -231,12 +240,12 @@ ensure_modern_jq() {
 # try; callers keep their pinned fallback for when both fail.
 gh_latest_tag() {   # <owner/repo>
     local url tag=""
-    url=$(curl -fsSIL --max-time 15 -o /dev/null -w '%{url_effective}' \
+    url=$(curl "${PSM_DL[@]}" -fsSIL --max-time 15 -o /dev/null -w '%{url_effective}' \
         "https://github.com/$1/releases/latest" 2>/dev/null || true)
     if [[ "$url" == */releases/tag/* ]]; then
         tag=${url##*/releases/tag/}; tag=${tag//%2F//}; tag=${tag//%2f//}
     fi
-    [[ -n "$tag" ]] || tag=$(curl -fsSL --max-time 15 "https://api.github.com/repos/$1/releases/latest" 2>/dev/null \
+    [[ -n "$tag" ]] || tag=$(curl "${PSM_DL[@]}" -fsSL --max-time 15 "https://api.github.com/repos/$1/releases/latest" 2>/dev/null \
         | jq -r '.tag_name // empty' 2>/dev/null || true)
     printf '%s' "$tag"
 }

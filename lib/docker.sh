@@ -113,7 +113,7 @@ docker_install() {
                 if ! "$pkg_cmd" config-manager --add-repo "$repo_url" 2>/dev/null; then
                     "$pkg_cmd" install -y dnf-plugins-core 2>/dev/null || true
                     "$pkg_cmd" config-manager --add-repo "$repo_url" 2>/dev/null \
-                        || curl -fsSL "$repo_url" -o /etc/yum.repos.d/docker-ce.repo \
+                        || curl "${PSM_DL[@]}" -fsSL "$repo_url" -o /etc/yum.repos.d/docker-ce.repo \
                         || { log_error "$(t docker.install.repo_fail)"; return 1; }
                 fi
             fi
@@ -122,7 +122,7 @@ docker_install() {
             ;;
         *)
             log_step "$(t docker.install.script)"
-            curl -fsSL https://get.docker.com | sh || { log_error "$(t docker.install.failed)"; return 1; }
+            curl "${PSM_DL[@]}" -fsSL https://get.docker.com | sh || { log_error "$(t docker.install.failed)"; return 1; }
             ;;
     esac
     svc_enable docker
@@ -159,7 +159,7 @@ docker_install_compose() {
             plugin_dir="/usr/local/lib/docker/cli-plugins"
             mkdir -p "$plugin_dir"
             log_step "$(t docker.compose.downloading "$arch")"
-            curl -fsSL \
+            curl "${PSM_DL[@]}" -fsSL \
                 "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-${arch}" \
                 -o "$plugin_dir/docker-compose" 2>/dev/null \
                 && chmod +x "$plugin_dir/docker-compose"

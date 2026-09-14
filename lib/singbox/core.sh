@@ -39,7 +39,7 @@ _sb_resolve_tag() {
     [[ -n "${PSM_SB_TAG:-}" ]] && { printf '%s' "$PSM_SB_TAG"; return 0; }
     if [[ "$channel" == "preview" ]]; then
         log_step "$(t sb.fetching_preview)"
-        tag=$(curl -fsSL "https://api.github.com/repos/SagerNet/sing-box/releases?per_page=20" 2>/dev/null \
+        tag=$(curl "${PSM_DL[@]}" -fsSL "https://api.github.com/repos/SagerNet/sing-box/releases?per_page=20" 2>/dev/null \
               | jq -r 'map(select(.prerelease == true and (.draft | not))) | .[0].tag_name // empty' || true)
         if [[ "$tag" =~ ^v[0-9] ]]; then
             log_warn "$(t sb.channel.preview_warn "$tag")"
@@ -101,11 +101,11 @@ sb_install() {
     local tmp_dir; tmp_dir=$(mktemp -d)
 
     log_step "$(t sb.downloading "$tag" "$sb_arch")"
-    curl -fsSL -o "$tmp_dir/$tarball" "$url" || {
+    curl "${PSM_DL[@]}" -fsSL -o "$tmp_dir/$tarball" "$url" || {
         [[ -n "$libc_suffix" ]] || { rm -rf "$tmp_dir"; die "$(t sb.download_fail "$url")"; }
         tarball="sing-box-${ver}-linux-${sb_arch}.tar.gz"
         url="${SB_RELEASES}/download/${tag}/${tarball}"
-        curl -fsSL -o "$tmp_dir/$tarball" "$url" \
+        curl "${PSM_DL[@]}" -fsSL -o "$tmp_dir/$tarball" "$url" \
             || { rm -rf "$tmp_dir"; die "$(t sb.download_fail "$url")"; }
     }
 

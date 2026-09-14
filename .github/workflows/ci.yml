@@ -114,6 +114,9 @@ jobs:
           - { os: alpine,   suite: slim }
           - { os: alma8,    suite: slim }
           - { os: debian10, suite: slim }
+          - { os: debian,   suite: retry }
+          - { os: alpine,   suite: retry }
+          - { os: alma8,    suite: retry }
     steps:
       - uses: actions/checkout@v4
       - name: tests/integration/container.sh ${{ matrix.os }} ${{ matrix.suite }}

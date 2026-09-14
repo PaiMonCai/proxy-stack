@@ -37,7 +37,7 @@ snell_install() {
     fi
     log_step "$(t snell.downloading_install)"
     local tmp; tmp=$(mktemp --suffix=.sh)
-    if ! curl -fsSL "$SNELL_INSTALLER" -o "$tmp"; then
+    if ! curl "${PSM_DL[@]}" -fsSL "$SNELL_INSTALLER" -o "$tmp"; then
         log_error "$(t snell.download_install_fail)"
         rm -f "$tmp"
         return 1
@@ -73,7 +73,7 @@ SNELL_RELEASE_NOTES="https://kb.nssurge.com/surge-knowledge-base/release-notes/s
 # snell-server-v5.0.1-linux-amd64.zip; betas (v5.0.2b1-linux…) don't match.
 _snell_latest_v5() {
     local v
-    v=$(curl -fsSL --max-time 15 "$SNELL_RELEASE_NOTES" 2>/dev/null \
+    v=$(curl "${PSM_DL[@]}" -fsSL --max-time 15 "$SNELL_RELEASE_NOTES" 2>/dev/null \
         | grep -oE 'snell-server-v5\.[0-9]+\.[0-9]+-linux' \
         | sed -e 's/^snell-server-//' -e 's/-linux$//' | sort -uV | tail -1)
     printf '%s' "${v:-$SNELL_NATIVE_FALLBACK}"
@@ -96,7 +96,7 @@ _snell_native_install() {
 
     local url="https://dl.nssurge.com/snell/snell-server-${ver}-linux-${zarch}.zip"
     local tmp; tmp=$(mktemp -d)
-    if ! curl -fsSL -o "$tmp/snell.zip" "$url" \
+    if ! curl "${PSM_DL[@]}" -fsSL -o "$tmp/snell.zip" "$url" \
         || ! unzip -qo "$tmp/snell.zip" -d "$tmp" \
         || [[ ! -f "$tmp/snell-server" ]]; then
         rm -rf "$tmp"
@@ -276,7 +276,7 @@ snell_update() {
     fi
     log_step "$(t snell.downloading_update)"
     local tmp; tmp=$(mktemp --suffix=.sh)
-    if ! curl -fsSL "$SNELL_INSTALLER" -o "$tmp"; then
+    if ! curl "${PSM_DL[@]}" -fsSL "$SNELL_INSTALLER" -o "$tmp"; then
         log_error "$(t snell.download_update_fail)"; rm -f "$tmp"; return 1
     fi
     bash "$tmp"; local rc=$?

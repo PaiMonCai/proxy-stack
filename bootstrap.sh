@@ -29,7 +29,7 @@ if [ -z "${BASH_VERSION:-}" ]; then
     esac
     PSM_BOOTSTRAP_TMP="$(mktemp)" || exit 1
     export PSM_BOOTSTRAP_TMP
-    curl -fsSL "${PSM_BOOTSTRAP_URL:-https://psm.jinqians.com}" -o "$PSM_BOOTSTRAP_TMP" \
+    curl --retry 3 --retry-delay 2 --connect-timeout 15 -fsSL "${PSM_BOOTSTRAP_URL:-https://psm.jinqians.com}" -o "$PSM_BOOTSTRAP_TMP" \
         || { rm -f "$PSM_BOOTSTRAP_TMP"; exit 1; }
     if (: </dev/tty) 2>/dev/null; then
         exec bash "$PSM_BOOTSTRAP_TMP" "$@" </dev/tty

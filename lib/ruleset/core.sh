@@ -87,7 +87,7 @@ rs_fetch() {
         log_error "$(t rs.fetch.https_only)"
         return 1
     fi
-    if ! curl -fsSL --max-time 30 --max-filesize "$RS_MAX_BYTES" "$url" -o "$out" 2>/dev/null; then
+    if ! curl "${PSM_DL[@]}" -fsSL --max-time 30 --max-filesize "$RS_MAX_BYTES" "$url" -o "$out" 2>/dev/null; then
         log_error "$(t rs.fetch.fail "$url")"
         return 1
     fi

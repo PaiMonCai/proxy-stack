@@ -55,7 +55,7 @@ _cft_install_binary() {
         arm32) cf_arch="arm" ;;
         *) log_error "$(t cf.tunnel.unsupported_arch "$arch")"; return 1 ;;
     esac
-    curl -fsSL -o "$CFT_BIN" \
+    curl "${PSM_DL[@]}" -fsSL -o "$CFT_BIN" \
         "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${cf_arch}" \
         || { log_error "$(t cf.tunnel.download_failed)"; return 1; }
     chmod +x "$CFT_BIN"

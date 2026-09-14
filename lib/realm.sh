@@ -140,7 +140,7 @@ realm_install() {
     local tmp_dir; tmp_dir=$(mktemp -d)
 
     log_step "$(t realm.downloading "$tag" "$realm_arch")"
-    if ! curl -fsSL -o "$tmp_dir/$file" "$url"; then
+    if ! curl "${PSM_DL[@]}" -fsSL -o "$tmp_dir/$file" "$url"; then
         rm -rf "$tmp_dir"; die "$(t realm.download_fail "$url")"
     fi
     tar -xzf "$tmp_dir/$file" -C "$tmp_dir" || { rm -rf "$tmp_dir"; die "$(t realm.extract_fail "$file")"; }

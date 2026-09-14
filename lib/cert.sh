@@ -26,7 +26,7 @@ acme_install() {
     ensure_cron || true
 
     # acme.sh installer expects  email=xxx  (no dashes), not --email xxx
-    curl -fsSL "$ACME_INSTALL_URL" | sh -s "email=$email"
+    curl "${PSM_DL[@]}" -fsSL "$ACME_INSTALL_URL" | sh -s "email=$email"
 
     export PATH="$ACME_HOME:$PATH"
     if [[ ! -f "$ACME_HOME/acme.sh" ]]; then

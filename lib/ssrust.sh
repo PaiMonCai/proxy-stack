@@ -23,7 +23,7 @@ ssrust_install() {
     _uses_systemd || { _ssrust_native_install install; return; }
     log_step "$(t ssrust.downloading_install)"
     local tmp; tmp=$(mktemp --suffix=.sh)
-    if ! curl -fsSL "$SS_INSTALLER" -o "$tmp"; then
+    if ! curl "${PSM_DL[@]}" -fsSL "$SS_INSTALLER" -o "$tmp"; then
         log_error "$(t ssrust.download_install_fail)"
         rm -f "$tmp"
         return 1
@@ -72,7 +72,7 @@ _ssrust_native_install() {
     local file="shadowsocks-${tag}.${triple}.tar.xz"
     local url="https://github.com/shadowsocks/shadowsocks-rust/releases/download/${tag}/${file}"
     local tmp; tmp=$(mktemp -d)
-    if ! curl -fsSL -o "$tmp/$file" "$url" \
+    if ! curl "${PSM_DL[@]}" -fsSL -o "$tmp/$file" "$url" \
         || ! xz -dc "$tmp/$file" | tar -x -C "$tmp" ssserver \
         || [[ ! -f "$tmp/ssserver" ]]; then
         rm -rf "$tmp"
@@ -164,7 +164,7 @@ ssrust_update() {
     _uses_systemd || { _ssrust_native_install update; return; }
     log_step "$(t ssrust.downloading_update)"
     local tmp; tmp=$(mktemp --suffix=.sh)
-    if ! curl -fsSL "$SS_INSTALLER" -o "$tmp"; then
+    if ! curl "${PSM_DL[@]}" -fsSL "$SS_INSTALLER" -o "$tmp"; then
         log_error "$(t ssrust.download_update_fail)"; rm -f "$tmp"; return 1
     fi
     bash "$tmp"; local rc=$?

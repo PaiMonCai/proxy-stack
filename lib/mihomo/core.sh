@@ -49,7 +49,7 @@ mh_install() {
     local tmp_dir; tmp_dir=$(mktemp -d)
 
     log_step "$(t mh.downloading "$tag" "$asset_arch")"
-    curl -fsSL -o "$tmp_dir/$asset" "$url" \
+    curl "${PSM_DL[@]}" -fsSL -o "$tmp_dir/$asset" "$url" \
         || { rm -rf "$tmp_dir"; die "$(t mh.download_fail "$url")"; }
 
     gunzip -f "$tmp_dir/$asset" \

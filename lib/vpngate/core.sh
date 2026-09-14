@@ -93,7 +93,7 @@ vg_fetch_list() {
     tmp=$(mktemp)
     for url in "${VG_API_URLS[@]}"; do
         # 名单约 1–3 MB，超时给足；拿到后校验表头，避免把运营商劫持页当成名单存下来。
-        if curl -fsSL --max-time 60 "$url" -o "$tmp" 2>/dev/null && grep -q '^#HostName' "$tmp"; then
+        if curl "${PSM_DL[@]}" -fsSL --max-time 60 "$url" -o "$tmp" 2>/dev/null && grep -q '^#HostName' "$tmp"; then
             rc=0; break
         fi
     done

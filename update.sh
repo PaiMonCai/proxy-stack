@@ -93,8 +93,8 @@ psm_update_nginx() {
 psm_update_geofiles() {
     log_step "$(t update.geo)"
     local base="https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download"
-    curl -fsSL "$base/geoip.dat"   -o /usr/local/share/xray/geoip.dat
-    curl -fsSL "$base/geosite.dat" -o /usr/local/share/xray/geosite.dat
+    curl "${PSM_DL[@]}" -fsSL "$base/geoip.dat"   -o /usr/local/share/xray/geoip.dat
+    curl "${PSM_DL[@]}" -fsSL "$base/geosite.dat" -o /usr/local/share/xray/geosite.dat
     log_ok "$(t update.geo_done)"
     svc_restart xray 2>/dev/null || true
 }
