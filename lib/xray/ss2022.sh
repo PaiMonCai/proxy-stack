@@ -140,7 +140,12 @@ _xss_build_inbound() {
 _xss_apply_to_xray() {
     local nodes; nodes=$(_xss_load)
     local count; count=$(echo "$nodes" | jq 'length')
-    (( count == 0 )) && return 0
+    # No nodes and no SS2022 inbound: nothing to do. With an inbound still there
+    # (the last node was just deleted) it must go too: returning early left it
+    # running, its port open, although PSM no longer listed the node.
+    if (( count == 0 )) && ! jq -e '[.inbounds[]? | select(((.tag // "") | startswith("xss-")) or ((.protocol // "") == "shadowsocks"))] | length > 0' "$XRAY_CFG" >/dev/null 2>&1; then
+        return 0
+    fi
 
     local tmp; tmp=$(mktemp)
     # Remove old SS2022 inbounds, then re-add from state. Match on protocol too:

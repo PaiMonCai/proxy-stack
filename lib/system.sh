@@ -228,15 +228,24 @@ EOF
 
 # ── Firewall backend detection — prefer a RUNNING backend over a merely
 #    installed one (a package can be present while its daemon is down) ──────────
-_fw_ufw_active()       { command -v ufw &>/dev/null && ufw status 2>/dev/null | grep -qi '^Status: active'; }
+# The output is read into a variable before it is searched: `cmd | grep -q`
+# stops reading at the first match, cmd may die of SIGPIPE while still
+# writing, and under `set -o pipefail` (manager.sh) the match then counts as
+# a failure. With the policy line first in `iptables -S`, that happened often
+# enough that psm node found no firewall and opened no port.
+_fw_ufw_active() {
+    command -v ufw &>/dev/null || return 1
+    local s; s=$(ufw status 2>/dev/null) || return 1
+    grep -qi '^Status: active' <<<"$s"
+}
 _fw_firewalld_active() { command -v firewall-cmd &>/dev/null && firewall-cmd --state &>/dev/null; }
 # iptables counts only when INPUT actually enforces (default DROP/REJECT policy
 # or an explicit drop/reject rule); an empty default-ACCEPT table is not a
 # firewall and appending ACCEPT rules to it would be meaningless noise.
 _fw_iptables_enforcing() {
     command -v iptables &>/dev/null || return 1
-    { iptables -S INPUT 2>/dev/null; ip6tables -S INPUT 2>/dev/null; } \
-        | grep -Eq '^-P INPUT (DROP|REJECT)|-j (DROP|REJECT)'
+    local s; s=$(iptables -S INPUT 2>/dev/null; ip6tables -S INPUT 2>/dev/null)
+    grep -Eq '^-P INPUT (DROP|REJECT)|-j (DROP|REJECT)' <<<"$s"
 }
 
 # ── Open a single port without resetting the whole firewall ──────────────────
@@ -290,13 +299,51 @@ firewall_open_port() {
         [[ "$proto" == "both" ]] && protos=(tcp udp) || protos=("$proto")
         for p in "${protos[@]}"; do
             iptables  -C INPUT -p "$p" --dport "$port" -j ACCEPT 2>/dev/null \
-                || iptables  -I INPUT -p "$p" --dport "$port" -j ACCEPT 2>/dev/null || true
+                || iptables  -w 5 -I INPUT -p "$p" --dport "$port" -j ACCEPT 2>/dev/null || true
             ip6tables -C INPUT -p "$p" --dport "$port" -j ACCEPT 2>/dev/null \
-                || ip6tables -I INPUT -p "$p" --dport "$port" -j ACCEPT 2>/dev/null || true
+                || ip6tables -w 5 -I INPUT -p "$p" --dport "$port" -j ACCEPT 2>/dev/null || true
+            # IPv4 is what counts (IPv6 may be absent): say so when the rule is not there
+            iptables -C INPUT -p "$p" --dport "$port" -j ACCEPT 2>/dev/null \
+                || { log_error "iptables: could not add the ACCEPT rule for $port/$p"; return 1; }
         done
         psm_iptables_persist   # survive reboots (per-distro location, see common.sh)
     fi
     log_ok "$(t system.fw.opened "$fw" "$port" "$proto")"
+}
+
+# The firewall that enforces here: ufw, firewalld, iptables, or nothing.
+firewall_backend() {
+    if _fw_ufw_active; then echo ufw
+    elif _fw_firewalld_active; then echo firewalld
+    elif _fw_iptables_enforcing; then echo iptables
+    fi
+}
+
+# Whether the enforcing firewall already lets <port>/<tcp|udp> in (a rule of
+# its own, not one PSM has to add).
+firewall_port_allowed() {
+    local port="$1" proto="$2"
+    case "$(firewall_backend)" in
+        ufw)       ufw status 2>/dev/null | awk -v r="$port/$proto" '$1 == r || $1 == r"(v6)" { f = 1 } END { exit !f }' ;;
+        firewalld) firewall-cmd --query-port="$port/$proto" &>/dev/null ;;
+        iptables)  iptables -C INPUT -p "$proto" --dport "$port" -j ACCEPT 2>/dev/null ;;
+        *)         return 0 ;;   # nothing enforces: everything is let in
+    esac
+}
+
+# Undo firewall_open_port for one <port>/<tcp|udp>.
+firewall_close_port() {
+    local port="$1" proto="$2"
+    case "$(firewall_backend)" in
+        ufw) ufw --force delete allow "$port/$proto" >/dev/null 2>&1 || true ;;
+        firewalld)
+            firewall-cmd --permanent --remove-port="$port/$proto" >/dev/null 2>&1 || true
+            firewall-cmd --reload >/dev/null 2>&1 || true ;;
+        iptables)
+            while iptables -D INPUT -p "$proto" --dport "$port" -j ACCEPT 2>/dev/null; do :; done
+            while ip6tables -D INPUT -p "$proto" --dport "$port" -j ACCEPT 2>/dev/null; do :; done
+            psm_iptables_persist ;;
+    esac
 }
 
 # ── Firewall quick-lock ───────────────────────────────────────────────────────

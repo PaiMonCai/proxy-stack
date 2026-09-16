@@ -220,10 +220,30 @@ _sb_ruleset_def() {
         geoip-*)   url="${SB_GEOIP_BASE}/${tag}.srs" ;;
         *) return 1 ;;
     esac
+    # 远程规则集是 sing-box 自己在「启动过程中」拉取的：拉不到就整个核心起不来，
+    # 那台机器上的所有节点一起断——服务器连不上 GitHub 时是永久性的。所以这里
+    # 先把 .srs 抓到本地（一天一刷），按 local 引用，启动不再依赖网络。
+    local dir="$SB_CFG_DIR/rulesets" file
+    file="$dir/${tag}.srs"
+    mkdir -p "$dir"
+    if [[ ! -s "$file" ]] || [[ -n "$(find "$file" -mmin +1440 -print -quit 2>/dev/null)" ]]; then
+        if curl "${PSM_DL[@]}" -fsSL --max-time 60 "$url" -o "${file}.new" 2>/dev/null && [[ -s "${file}.new" ]]; then
+            mv -f "${file}.new" "$file"
+        else
+            rm -f "${file}.new"
+        fi
+    fi
+    if [[ -s "$file" ]]; then
+        jq -n --arg tag "$tag" --arg path "$file" '{tag:$tag, type:"local", format:"binary", path:$path}'
+        return 0
+    fi
+    # 抓不到就退回远程，交给 sing-box 启动时再试
     local cur; cur=$(_sb_installed_version)
     local detour
     if [[ -n "$cur" ]] && _sb_version_ge "$cur" "1.14.0"; then
-        detour='{"http_client":{"detour":"direct"}}'
+        # 1.14 拒绝把下载绕行指到 PSM 那个空的 direct 出站（"detour to an empty
+        # direct outbound makes no sense"）。不写这个字段即可：默认就是直连。
+        detour='{}'
     else
         detour='{"download_detour":"direct"}'
     fi
@@ -249,6 +269,7 @@ _sb_route_ruleset_tags() {
     geoip)      echo "$val" | tr ',' '\n' | sed 's/^ *//;s/ *$//;/^$/d;s/^/geoip-/'   | tr '\n' ' ' ;;
     preset-ads) echo "geosite-category-ads-all" ;;
     ruleset)    echo "psm-${val}" ;;
+    inbound)    echo "$e" | jq -r '.geosite // ""' | tr ',' '\n' | sed 's/^ *//;s/ *$//;/^$/d;s/^/geosite-/' | tr '\n' ' ' ;;
     esac
 }
 
@@ -278,8 +299,12 @@ _sb_route_build_rule() {
         local arr; arr=$(echo "$val" | tr ',' '\n' | sed 's/^ *//;s/ *$//;/^$/d' | jq -R . | jq -sc .)
         jq -nc --argjson c "$arr" --argjson t "$tgt" '{ip_cidr:$c} + $t' ;;
     inbound)
+        # .geosite (a node's exit, lib/exit_cli.sh): only those sites from that
+        # inbound; different fields of one sing-box rule are ANDed.
         local arr; arr=$(echo "$val" | tr ',' '\n' | sed 's/^ *//;s/ *$//;/^$/d' | jq -R . | jq -sc .)
-        jq -nc --argjson i "$arr" --argjson t "$tgt" '{inbound:$i} + $t' ;;
+        local geo; geo=$(echo "$e" | jq -r '.geosite // ""' | tr ',' '\n' | sed 's/^ *//;s/ *$//;/^$/d;s/^/geosite-/' | jq -R . | jq -sc .)
+        jq -nc --argjson i "$arr" --argjson g "$geo" --argjson t "$tgt" \
+            '{inbound:$i} + (if ($g | length) > 0 then {rule_set:$g} else {} end) + $t' ;;
     preset-ads)
         jq -nc '{rule_set:["geosite-category-ads-all"], action:"reject"}' ;;
     preset-quic)

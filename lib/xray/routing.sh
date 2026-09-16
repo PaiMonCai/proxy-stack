@@ -73,8 +73,11 @@ _route_build_xray_rule() {
         ;;
     inbound)
         local arr; arr=$(echo "$val" | tr ',' '\n' | jq -R . | jq -sc .)
-        jq -n --argjson ib "$arr" --arg ot "$outtag" \
-            '{"type":"field","inboundTag":$ib,"outboundTag":$ot}'
+        # .geosite (a node's exit, lib/exit_cli.sh): only those sites from that
+        # inbound. Fields of one Xray rule are ANDed, which is what that means.
+        local geo; geo=$(echo "$e" | jq -c '(.geosite // "") | split(",") | map(gsub("^\\s+|\\s+$"; "") | select(length > 0) | "geosite:" + ltrimstr("geosite:"))')
+        jq -n --argjson ib "$arr" --arg ot "$outtag" --argjson dm "$geo" \
+            '{"type":"field","inboundTag":$ib,"outboundTag":$ot} + (if ($dm | length) > 0 then {"domain":$dm} else {} end)'
         ;;
     ruleset)
         # 订阅式规则集（lib/ruleset/）。Xray 没有规则集机制，只能把规则内联展开进

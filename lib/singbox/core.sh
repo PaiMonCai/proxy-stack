@@ -345,14 +345,47 @@ _sb_cfg_backup() {
 # 校验并重启：先 sing-box check。
 #  - 通过：删除 .prev 备份，再 restart（restart 失败维持原状返回 1）。
 #  - 失败：坏配置已落盘，若存在 .prev 则 mv 回去真正恢复变更前配置，再回显错误。
+# Did sing-box really come up and stay up? `systemctl restart` returns success
+# even when the unit dies immediately afterwards and enters its restart loop
+# (svc_is_active sees that, and OpenRC's supervisor with a dying child too), so
+# wait for it to be active three checks in a row.
+_sb_service_holds() {
+    local i held=0
+    for i in $(seq 1 12); do
+        if svc_is_active sing-box; then
+            held=$((held + 1))
+            (( held >= 3 )) && return 0
+        else
+            held=0
+        fi
+        sleep 1
+    done
+    return 1
+}
+
+_sb_service_log_tail() { svc_log_tail sing-box 15 >&2; }
+
 sb_test_restart() {
     local test_out
     psm_users_merge sing-box
     if test_out=$("$SB_BIN" check -c "$SB_CFG" 2>&1); then
-        rm -f "${SB_CFG}.prev"
         source "$LIB_DIR/coreperm.sh" && psm_core_nonroot_ensure sing-box
-        svc_restart sing-box && { log_ok "$(t sb.restarted)"; return 0; }
+        if svc_restart sing-box && _sb_service_holds; then
+            rm -f "${SB_CFG}.prev"
+            log_ok "$(t sb.restarted)"
+            return 0
+        fi
+        # `sing-box check` only reads the config; what it cannot run (a rule
+        # set it refuses to fetch, say) fails at startup, and systemd's restart
+        # still returns success while the unit dies and retries. Without this
+        # the bad config stayed and every node on the server was down.
         log_error "$(t sb.restart_fail)"
+        _sb_service_log_tail
+        if [[ -f "${SB_CFG}.prev" ]]; then
+            mv -f "${SB_CFG}.prev" "$SB_CFG"
+            log_warn "$(t sb.rolled_back)"
+            svc_restart sing-box >/dev/null 2>&1 || true
+        fi
         return 1
     fi
     log_error "$(t sb.test_fail)"

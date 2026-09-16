@@ -60,6 +60,18 @@ case "${1:-}" in
         psm_agent_cli "$@"
         exit $?
         ;;
+    sni)
+        shift
+        source "$LIB_DIR/sni_cli.sh"
+        psm_sni_cli "$@"
+        exit $?
+        ;;
+    exit)
+        shift
+        source "$LIB_DIR/exit_cli.sh"
+        psm_exit_cli "$@"
+        exit $?
+        ;;
     version|--version)
         psm_version
         exit 0
@@ -78,6 +90,9 @@ Usage:
                               Traffic metering and limits per node
   psm agent join|status|remove [...]
                               Connect this server to a PSM panel (psm-agent)
+  psm sni find [...]          REALITY camouflage targets in this server's network (mapping engine + TLS check)
+  psm exit status|warp|vpngate [...]
+                              The WARP and free residential exits (a node uses one with --exit)
   psm version                 The PSM version (date and commit)
   psm migrate export|import|push [...]
                               Move this server to another host (psm migrate --help)

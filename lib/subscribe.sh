@@ -168,6 +168,10 @@ _sub_build_singbox_client() {
 _sub_sb_outbound() {
     local core="$1" proto="$2" n="$3" server="$4" tag="$5"
     local port; port=$(printf '%s' "$n" | jq -r '.public_port // .port')
+    # sing-box has no XHTTP transport (mihomo's VLESS has it): such a node has
+    # no sing-box outbound. Writing one anyway made sing-box refuse the whole
+    # subscription it was in.
+    [[ "$proto" == vless && "$(printf '%s' "$n" | jq -r '.transport // "tcp"')" == xhttp ]] && return 0
     case "$proto" in
         reality)
             jq -n --arg t "PSM-$tag" --arg s "$server" --argjson p "$port" \
@@ -186,9 +190,10 @@ _sub_sb_outbound() {
                   --arg f "$(printf '%s' "$n" | jq -r '.flow // ""')" \
                   --arg sn "$(printf '%s' "$n" | jq -r '.sni // .domain')" \
                   --arg tr "$(printf '%s' "$n" | jq -r '.transport // "tcp"')" \
-                  --arg path "$(printf '%s' "$n" | jq -r '.path // "/"')" '
+                  --arg path "$(printf '%s' "$n" | jq -r '.path // "/"')" \
+                  --argjson ins "$(printf '%s' "$n" | jq '(.insecure // 0) | tostring | test("^(1|true)$")')" '
                 { type:"vless", tag:$t, server:$s, server_port:$p, uuid:$u,
-                  tls:{ enabled:true, server_name:$sn } }
+                  tls:{ enabled:true, server_name:$sn, insecure:$ins } }
                 + (if $f == "" then {} else {flow:$f} end)
                 + (if   $tr == "tcp"  then {}
                    elif $tr == "grpc" then {transport:{type:"grpc", service_name:($path|ltrimstr("/"))}}
@@ -197,16 +202,18 @@ _sub_sb_outbound() {
         trojan)
             jq -n --arg t "PSM-$tag" --arg s "$server" --argjson p "$port" \
                   --arg pw "$(printf '%s' "$n" | jq -r '.password')" \
-                  --arg sn "$(printf '%s' "$n" | jq -r '.sni // .domain')" '
+                  --arg sn "$(printf '%s' "$n" | jq -r '.sni // .domain')" \
+                  --argjson ins "$(printf '%s' "$n" | jq '(.insecure // 0) | tostring | test("^(1|true)$")')" '
                 { type:"trojan", tag:$t, server:$s, server_port:$p, password:$pw,
-                  tls:{ enabled:true, server_name:$sn } }' ;;
+                  tls:{ enabled:true, server_name:$sn, insecure:$ins } }' ;;
         vmess)
             jq -n --arg t "PSM-$tag" --arg s "$server" --argjson p "$port" \
                   --arg u "$(printf '%s' "$n" | jq -r '.uuid')" \
                   --arg sn "$(printf '%s' "$n" | jq -r '.sni // .domain')" \
-                  --arg path "$(printf '%s' "$n" | jq -r '.path // "/"')" '
+                  --arg path "$(printf '%s' "$n" | jq -r '.path // "/"')" \
+                  --argjson ins "$(printf '%s' "$n" | jq '(.insecure // 0) | tostring | test("^(1|true)$")')" '
                 { type:"vmess", tag:$t, server:$s, server_port:$p, uuid:$u, security:"auto",
-                  tls:{ enabled:true, server_name:$sn },
+                  tls:{ enabled:true, server_name:$sn, insecure:$ins },
                   transport:{ type:"ws", path:$path } }' ;;
         ss2022)
             jq -n --arg t "PSM-$tag" --arg s "$server" --argjson p "$port" \
@@ -237,6 +244,74 @@ _sub_sb_outbound() {
                         insecure:(($n.insecure // 0) | tostring | test("^(1|true)$")) } }' ;;
         *) printf '' ;;   # vision/xhttp/snell/socks 交给 URI 订阅，不进原生配置
     esac
+}
+
+# ── A node as one mihomo proxy (the PSM panel's Clash subscription) ──────────
+# The TLS protocols, whose certificate may be self-signed: mihomo's share-link
+# import reads no "skip verification" flag for VLESS, VMess or TUIC, so such a
+# node imported from its link never connects. Written out with
+# skip-cert-verify (and everything else) it does. Other protocols print
+# nothing: their share links import as they are.
+_sub_mh_proxy() {
+    local core="$1" proto="$2" n="$3" server="$4" tag="$5"
+    local port; port=$(printf '%s' "$n" | jq -r '.public_port // .port')
+    case "$proto" in vless|trojan|vmess|hysteria2|anytls|tuic|ss2022|reality|vision|socks) ;; *) return 0 ;; esac
+    # a loopback SOCKS5 node has no address a client could use
+    [[ "$proto" == socks && "$(printf '%s' "$n" | jq -r '.listen_addr // ""')" == "127.0.0.1" ]] && return 0
+    # mihomo's VLESS has no QUIC transport
+    [[ "$proto" == vless && "$(printf '%s' "$n" | jq -r '.transport // "tcp"')" == quic ]] && return 0
+    jq -cn --arg name "PSM-$tag" --arg core "$core" --arg proto "$proto" --arg s "$server" \
+        --argjson p "$port" --argjson n "$n" '
+      ((($n.insecure // 0) | tostring | test("^(1|true)$"))) as $ins
+      | ($n.sni // $n.domain // "") as $sni
+      | {name: $name, server: $s, port: $p}
+      + (if $proto == "vless" then
+           (($n.transport // "tcp") as $tr | ($n.path // "/") as $path
+            | {type: "vless", uuid: $n.uuid, udp: true, tls: true, servername: $sni,
+               "skip-cert-verify": $ins, "client-fingerprint": "chrome"}
+            + (if ($n.flow // "") != "" and $tr == "tcp" then {flow: $n.flow} else {} end)
+            + (if ($n.vless_encryption // "") != "" then {encryption: $n.vless_encryption} else {} end)
+            + (if   $tr == "ws"          then {network: "ws", "ws-opts": {path: $path, headers: {Host: $sni}}}
+               elif $tr == "httpupgrade" then {network: "ws", "ws-opts": {path: $path, headers: {Host: $sni}, "v2ray-http-upgrade": true}}
+               elif $tr == "grpc"        then {network: "grpc", "grpc-opts": {"grpc-service-name": ($path | ltrimstr("/"))}}
+               elif $tr == "http"        then {network: "h2", "h2-opts": {host: [$sni], path: $path}}
+               elif $tr == "xhttp"       then {network: "xhttp", "xhttp-opts": {path: $path, host: $sni}}
+               else {network: "tcp"} end))
+         elif $proto == "ss2022" then
+           ({type: "ss", cipher: $n.method, password: $n.password, udp: true}
+            + (if ($n.stls_password // "") != "" then
+                 {plugin: "shadow-tls", "plugin-opts": {host: $n.stls_sni, password: $n.stls_password, version: 3}} else {} end))
+         elif $proto == "reality" then
+           ({type: "vless", uuid: $n.uuid, udp: true, tls: true, network: "tcp", servername: $n.server_name,
+             "client-fingerprint": "chrome",
+             "reality-opts": {"public-key": $n.public_key, "short-id": (($n.short_ids // [])[0] // $n.short_id // "")}}
+            + (if ($n.flow // "") != "" then {flow: $n.flow} else {} end)
+            + (if ($n.vless_encryption // "") != "" then {encryption: $n.vless_encryption} else {} end))
+         elif $proto == "vision" then
+           ({type: "vless", uuid: $n.uuid, udp: true, tls: true, network: "tcp", servername: $n.domain,
+             "client-fingerprint": "chrome"}
+            + (if ($n.flow // "") != "" then {flow: $n.flow} else {} end)
+            + (if ($n.vless_encryption // "") != "" then {encryption: $n.vless_encryption} else {} end))
+         elif $proto == "socks" then
+           ({type: "socks5", udp: true}
+            + (if ($n.username // "") != "" then {username: $n.username, password: $n.password} else {} end))
+         elif $proto == "trojan" then
+           ({type: "trojan", password: $n.password, udp: true, sni: $sni, "skip-cert-verify": $ins}
+            + (if $core == "xray" then {alpn: ["h2", "http/1.1"]} else {} end))
+         elif $proto == "vmess" then
+           {type: "vmess", uuid: $n.uuid, alterId: 0, cipher: "auto", udp: true, tls: true, servername: $sni,
+            "skip-cert-verify": $ins, network: "ws", "ws-opts": {path: ($n.path // "/"), headers: {Host: $sni}}}
+         elif $proto == "hysteria2" then
+           ({type: "hysteria2", password: $n.password, sni: $sni, "skip-cert-verify": $ins, alpn: ["h3"]}
+            + (if ($n.hop_ports // "") != "" then {ports: $n.hop_ports} else {} end)
+            + (if ($n.obfs_pass // "") != "" then {obfs: ($n.obfs_type // "salamander"), "obfs-password": $n.obfs_pass} else {} end))
+         elif $proto == "anytls" then
+           {type: "anytls", password: $n.password, udp: true, sni: $sni, "skip-cert-verify": $ins, "client-fingerprint": "chrome"}
+         else
+           {type: "tuic", uuid: $n.uuid, password: $n.password, sni: $sni, "skip-cert-verify": $ins, alpn: ["h3"],
+            "congestion-controller": ($n.congestion_control // "bbr"), "udp-relay-mode": "native"}
+         end)
+      + (if ($n.ech_config // "") != "" then {"ech-opts": {enable: true, config: $n.ech_config}} else {} end)'
 }
 
 # ── mihomo 客户端配置 ─────────────────────────────────────────────────────────

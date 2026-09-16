@@ -11,7 +11,9 @@
 // Tasks: node.add (installing the core first when the server has never run
 // it), node.update, node.delete, node.export, standalone.install and
 // standalone.remove (Snell / ss-rust), traffic.set, traffic.reset,
-// traffic.report (send the counters with the next sync), status.
+// traffic.report (send the counters with the next sync), status, and
+// agent.leave (the server was removed from the panel: delete the panel's
+// nodes, report, then uninstall psm-agent itself).
 //
 //	psm-agent join -panel https://psm.example.com -token <join token>
 //	psm-agent run
@@ -39,10 +41,11 @@ import (
 	"time"
 )
 
-const agentVersion = "0.4.0"
+const agentVersion = "0.5.0"
 
 const (
 	commandTimeout  = 120 * time.Second // one psm command
+	sniTimeout      = 5 * time.Minute   // a mapping-engine search and its TLS checks
 	installTimeout  = 15 * time.Minute  // installing a core or a standalone server
 	requestTimeout  = 30 * time.Second  // one request to the panel
 	maxTaskData     = 64 << 10          // a task's node settings
@@ -65,6 +68,9 @@ var protocols = map[string]bool{
 
 // the standalone servers (`psm standalone`)
 var standalones = map[string]bool{"snell": true, "ss2022": true}
+
+// the cyberspace-mapping engines psm sni find knows
+var sniEngines = map[string]bool{"netlas": true, "quake": true, "zoomeye": true, "fofa": true}
 
 var ssMethods = map[string]bool{
 	"2022-blake3-aes-128-gcm": true, "2022-blake3-aes-256-gcm": true, "2022-blake3-chacha20-poly1305": true,
@@ -222,6 +228,7 @@ type result struct {
 	Output   json.RawMessage `json:"output,omitempty"`
 	Link     string          `json:"link,omitempty"`
 	Outbound json.RawMessage `json:"outbound,omitempty"` // the node as a sing-box client outbound
+	Clash    json.RawMessage `json:"clash,omitempty"`    // the node as a mihomo proxy (TLS protocols)
 	Error    string          `json:"error,omitempty"`
 }
 
@@ -245,11 +252,42 @@ func execRunner(bin string) runner {
 type agent struct {
 	cfg         *config
 	run         runner
+	spawn       func(args ...string) error // starts a psm command that outlives psm-agent
 	hostname    string
 	pending     []result  // results not yet delivered to the panel
 	lastTraffic time.Time // when the traffic counters last went to the panel
 	psmVersion  string
 	versionAt   time.Time
+	leaving     bool // agent.leave ran: uninstall once its result is delivered
+	left        bool // the uninstall has been started
+}
+
+// spawnDetached starts `psm <args>` outside psm-agent's service, so that it
+// survives psm-agent being stopped by it: stopping a systemd service kills its
+// whole cgroup (hence systemd-run, a unit of its own); OpenRC stops the process
+// it started (a new session is enough).
+func spawnDetached(psm string) func(args ...string) error {
+	return func(args ...string) error {
+		if _, err := os.Stat("/run/systemd/system"); err == nil {
+			if sr, err := exec.LookPath("systemd-run"); err == nil {
+				return exec.Command(sr, append([]string{"--unit", "psm-agent-leave", "--collect", "--quiet", psm}, args...)...).Run()
+			}
+		}
+		cmd := exec.Command(psm, args...)
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		return cmd.Start()
+	}
+}
+
+// leavePlan is what agent.leave removes: the panel's own nodes (nodes made on
+// the server's command line are not in it) and standalone servers.
+type leavePlan struct {
+	Nodes []struct {
+		Core     string `json:"core"`
+		Protocol string `json:"protocol"`
+		Tag      string `json:"tag"`
+	} `json:"nodes"`
+	Standalone []string `json:"standalone"`
 }
 
 func rejected(t task, why string) result {
@@ -374,19 +412,34 @@ func (a *agent) jsonPart(ctx context.Context, args ...string) json.RawMessage {
 	return json.RawMessage(out)
 }
 
-// export returns a node's client link and, when sing-box has a client
-// outbound for it, that outbound. standalone: the standalone server named by
-// t.Protocol, shown in links as PSM-<tag>.
-func (a *agent) export(ctx context.Context, t task, standalone bool) (string, json.RawMessage, error) {
+// exported is a node as the panel's subscriptions carry it.
+type exported struct {
+	link     string
+	outbound json.RawMessage // a sing-box client outbound, when sing-box has one for it
+	clash    json.RawMessage // a mihomo proxy, for the TLS protocols (see psm node export --format clash)
+}
+
+// jsonOf is psm's output when it is one JSON value, else nil.
+func jsonOf(out []byte, err error) json.RawMessage {
+	if out = bytes.TrimSpace(out); err != nil || len(out) == 0 || !json.Valid(out) {
+		return nil
+	}
+	return json.RawMessage(out)
+}
+
+// export returns a node's client link, sing-box outbound and mihomo proxy.
+// standalone: the standalone server named by t.Protocol, shown in links as
+// PSM-<tag> (no mihomo proxy: its share link imports as it is).
+func (a *agent) export(ctx context.Context, t task, standalone bool) (exported, error) {
 	format := t.Format
 	if format == "" {
 		format = "uri"
 	}
 	if format != "uri" && format != "surge" {
-		return "", nil, errors.New("rejected by psm-agent: bad export format " + format)
+		return exported{}, errors.New("rejected by psm-agent: bad export format " + format)
 	}
 	if t.Server == "" || len(t.Server) > 253 || !hostRe.MatchString(t.Server) {
-		return "", nil, errors.New("rejected by psm-agent: bad server address")
+		return exported{}, errors.New("rejected by psm-agent: bad server address")
 	}
 	base := []string{"node", "export", t.Core, t.Protocol, t.Tag}
 	if standalone {
@@ -397,15 +450,14 @@ func (a *agent) export(ctx context.Context, t task, standalone bool) (string, js
 	}
 	out, err := a.psm(ctx, nil, with(format)...)
 	if err != nil {
-		return "", nil, err
+		return exported{}, err
 	}
-	var ob json.RawMessage
-	if sb, err := a.psm(ctx, nil, with("singbox")...); err == nil {
-		if sb = bytes.TrimSpace(sb); len(sb) > 0 && json.Valid(sb) {
-			ob = json.RawMessage(sb)
-		}
+	e := exported{link: strings.TrimSpace(string(out))}
+	e.outbound = jsonOf(a.psm(ctx, nil, with("singbox")...))
+	if !standalone {
+		e.clash = jsonOf(a.psm(ctx, nil, with("clash")...))
 	}
-	return strings.TrimSpace(string(out)), ob, nil
+	return e, nil
 }
 
 // status gathers what the panel shows for a server.
@@ -451,15 +503,16 @@ func (a *agent) execute(ctx context.Context, t task) result {
 		if _, err := a.psmFor(ctx, installTimeout, nil, "core", "install", t.Core, "--if-missing", "--json"); err != nil {
 			return fail(fmt.Errorf("installing %s: %w", t.Core, err))
 		}
-		out, err := a.psm(ctx, t.Data, "node", "add", t.Core, t.Protocol, "--input", "-", "--json")
+		// the long timeout: a node whose exit is the residential tunnel connects it first
+		out, err := a.psmFor(ctx, installTimeout, t.Data, "node", "add", t.Core, t.Protocol, "--input", "-", "--json")
 		if err != nil {
 			return fail(err)
 		}
 		r.OK, r.Output = true, jsonOrNil(out)
 		if t.Server != "" { // the client link, for the panel's subscription
 			t.Tag = tag
-			if link, ob, err := a.export(ctx, t, false); err == nil {
-				r.Link, r.Outbound = link, ob
+			if e, err := a.export(ctx, t, false); err == nil {
+				r.Link, r.Outbound, r.Clash = e.link, e.outbound, e.clash
 			} else {
 				log.Printf("task %d: node added, export failed: %v", t.ID, err)
 			}
@@ -471,14 +524,14 @@ func (a *agent) execute(ctx context.Context, t task) result {
 		if _, why := nodeData(t); why != "" {
 			return rejected(t, why)
 		}
-		out, err := a.psm(ctx, t.Data, "node", "update", t.Core, t.Protocol, t.Tag, "--input", "-", "--json")
+		out, err := a.psmFor(ctx, installTimeout, t.Data, "node", "update", t.Core, t.Protocol, t.Tag, "--input", "-", "--json")
 		if err != nil {
 			return fail(err)
 		}
 		r.OK, r.Output = true, jsonOrNil(out)
 		if t.Server != "" {
-			if link, ob, err := a.export(ctx, t, false); err == nil {
-				r.Link, r.Outbound = link, ob
+			if e, err := a.export(ctx, t, false); err == nil {
+				r.Link, r.Outbound, r.Clash = e.link, e.outbound, e.clash
 			}
 		}
 	case "node.delete":
@@ -494,11 +547,29 @@ func (a *agent) execute(ctx context.Context, t task) result {
 		if why := checkNode(t, true); why != "" {
 			return rejected(t, why)
 		}
-		link, ob, err := a.export(ctx, t, false)
+		e, err := a.export(ctx, t, false)
 		if err != nil {
 			return fail(err)
 		}
-		r.OK, r.Link, r.Outbound = true, link, ob
+		r.OK, r.Link, r.Outbound, r.Clash = true, e.link, e.outbound, e.clash
+	case "sni.find":
+		// REALITY camouflage targets in this server's network. The mapping
+		// engine's key travels on stdin only (never in argv or a log).
+		var q struct {
+			Engine string `json:"engine"`
+			Key    string `json:"key"`
+		}
+		if err := json.Unmarshal(t.Data, &q); err != nil || !sniEngines[q.Engine] {
+			return rejected(t, "sni.find needs an engine (netlas, quake, zoomeye, fofa)")
+		}
+		if q.Key == "" || len(q.Key) > 512 || strings.ContainsAny(q.Key, "\r\n") {
+			return rejected(t, "sni.find needs the engine's API key")
+		}
+		out, err := a.psmFor(ctx, sniTimeout, []byte(q.Key+"\n"), "sni", "find", "--engine", q.Engine, "--key-stdin", "--json")
+		if err != nil {
+			return fail(err)
+		}
+		r.OK, r.Output = true, jsonOrNil(out)
 	case "standalone.install":
 		if !standalones[t.Protocol] {
 			return rejected(t, "not a standalone server: "+t.Protocol)
@@ -516,8 +587,8 @@ func (a *agent) execute(ctx context.Context, t task) result {
 		}
 		r.OK, r.Output = true, jsonOrNil(out)
 		if t.Server != "" {
-			if link, ob, err := a.export(ctx, t, true); err == nil {
-				r.Link, r.Outbound = link, ob
+			if e, err := a.export(ctx, t, true); err == nil {
+				r.Link, r.Outbound = e.link, e.outbound
 			} else {
 				log.Printf("task %d: %s installed, export failed: %v", t.ID, t.Protocol, err)
 			}
@@ -561,6 +632,41 @@ func (a *agent) execute(ctx context.Context, t task) result {
 		}
 		r.OK, r.Output = true, jsonOrNil(out)
 		a.lastTraffic = time.Time{}
+	case "agent.leave":
+		var plan leavePlan
+		if len(t.Data) > maxTaskData || json.Unmarshal(t.Data, &plan) != nil {
+			return rejected(t, "bad leave plan")
+		}
+		// every entry is checked before anything is removed
+		for _, n := range plan.Nodes {
+			if why := checkNode(task{Core: n.Core, Protocol: n.Protocol, Tag: n.Tag}, true); why != "" {
+				return rejected(t, why)
+			}
+		}
+		for _, p := range plan.Standalone {
+			if !standalones[p] {
+				return rejected(t, "not a standalone server: "+p)
+			}
+		}
+		removed, failed := []string{}, []string{}
+		for _, n := range plan.Nodes {
+			if _, err := a.psm(ctx, nil, "node", "delete", n.Core, n.Protocol, n.Tag, "--yes", "--if-exists", "--json"); err != nil {
+				failed = append(failed, n.Tag+": "+err.Error())
+			} else {
+				removed = append(removed, n.Tag)
+			}
+		}
+		for _, p := range plan.Standalone {
+			if _, err := a.psmFor(ctx, installTimeout, nil, "standalone", "remove", p, "--yes", "--json"); err != nil {
+				failed = append(failed, p+": "+err.Error())
+			} else {
+				removed = append(removed, p)
+			}
+		}
+		out, _ := json.Marshal(map[string][]string{"removed": removed, "failed": failed})
+		// psm-agent goes in any case: the panel has forgotten this server
+		r.OK, r.Output = true, out
+		a.leaving = true
 	case "traffic.report": // the panel's 流量 page asks for the counters now
 		a.lastTraffic = time.Time{}
 		r.OK = true
@@ -618,12 +724,23 @@ func (a *agent) step(ctx context.Context) (time.Duration, error) {
 			req["traffic"] = tr
 		}
 	}
+	delivering := a.leaving // this sync carries agent.leave's result
 	if err := post(ctx, a.cfg.Panel, "/api/agent/sync", a.cfg.Token, req, &resp); err != nil {
 		return 0, err
 	}
 	a.pending = nil
 	if trafficDue {
 		a.lastTraffic = time.Now()
+	}
+	if delivering {
+		// the panel has the result: uninstall psm-agent (which stops this process)
+		a.left = true
+		if a.spawn != nil {
+			if err := a.spawn("agent", "remove", "--yes"); err != nil {
+				log.Printf("could not start psm agent remove: %v", err)
+			}
+		}
+		return 0, nil
 	}
 	for _, t := range resp.Tasks {
 		r := a.execute(ctx, t)
@@ -644,6 +761,11 @@ func (a *agent) loop(ctx context.Context) {
 	backoff := 5 * time.Second
 	for {
 		wait, err := a.step(ctx)
+		if a.left {
+			log.Printf("removed from the panel: psm-agent is uninstalling itself")
+			<-ctx.Done() // `psm agent remove` stops this service
+			return
+		}
 		if err != nil {
 			var he *httpError
 			if errors.As(err, &he) && he.status == http.StatusUnauthorized {
@@ -702,7 +824,7 @@ func main() {
 		}
 		host, _ := os.Hostname()
 		log.Printf("psm-agent %s syncing with %s", agentVersion, cfg.Panel)
-		(&agent{cfg: cfg, run: execRunner(cfg.PSM), hostname: host}).loop(ctx)
+		(&agent{cfg: cfg, run: execRunner(cfg.PSM), spawn: spawnDetached(cfg.PSM), hostname: host}).loop(ctx)
 	default:
 		log.Fatalf("psm-agent: unknown command %q", os.Args[1])
 	}

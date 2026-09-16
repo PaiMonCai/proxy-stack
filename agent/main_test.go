@@ -143,6 +143,26 @@ func TestPanelMustBeHTTPS(t *testing.T) {
 	}
 }
 
+func TestSniFindSendsTheKeyOnStdinOnly(t *testing.T) {
+	p := &fakePanel{tasks: []task{
+		{ID: 1, Kind: "sni.find", Data: json.RawMessage(`{"engine":"netlas","key":"k-123"}`)},
+		{ID: 2, Kind: "sni.find", Data: json.RawMessage(`{"engine":"--help","key":"k"}`)},
+		{ID: 3, Kind: "sni.find", Data: json.RawMessage(`{"engine":"fofa","key":"a\nb"}`)},
+		{ID: 4, Kind: "sni.find", Data: json.RawMessage(`{"engine":"quake"}`)},
+	}}
+	f := &fakeRunner{stdout: map[string]string{"find": `{"candidates":[]}`}}
+	a, done := newTestAgent(t, p, f)
+	defer done()
+
+	if _, err := a.step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	want := []call{{[]string{"sni", "find", "--engine", "netlas", "--key-stdin", "--json"}, "k-123\n"}}
+	if !reflect.DeepEqual(f.calls, want) {
+		t.Fatalf("psm calls\n got %q\nwant %q (a bad engine, a key with a newline or no key never reaches psm)", f.calls, want)
+	}
+}
+
 func TestSyncRunsTasksAndReportsResults(t *testing.T) {
 	p := &fakePanel{tasks: []task{
 		{ID: 1, Kind: "node.add", Core: "xray", Protocol: "reality", Data: json.RawMessage(`{"tag":"hk","port":443,"server_name":"a.example"}`), Server: "203.0.113.10", Format: "uri"},
@@ -161,6 +181,7 @@ func TestSyncRunsTasksAndReportsResults(t *testing.T) {
 		{[]string{"node", "add", "xray", "reality", "--input", "-", "--json"}, `{"tag":"hk","port":443,"server_name":"a.example"}`},
 		{[]string{"node", "export", "xray", "reality", "hk", "--format", "uri", "--server", "203.0.113.10"}, ""},
 		{[]string{"node", "export", "xray", "reality", "hk", "--format", "singbox", "--server", "203.0.113.10"}, ""},
+		{[]string{"node", "export", "xray", "reality", "hk", "--format", "clash", "--server", "203.0.113.10"}, ""},
 		{[]string{"node", "delete", "sing-box", "tuic", "old", "--yes", "--if-exists", "--json"}, ""},
 	}
 	if !reflect.DeepEqual(f.calls, want) {
@@ -275,6 +296,67 @@ func TestTrafficIsReportedWhenDue(t *testing.T) {
 	}
 }
 
+func TestLeaveRemovesTheNodesThenTheAgent(t *testing.T) {
+	p := &fakePanel{tasks: []task{{ID: 5, Kind: "agent.leave", Data: json.RawMessage(
+		`{"nodes":[{"core":"xray","protocol":"reality","tag":"a"},{"core":"sing-box","protocol":"ss2022","tag":"b"}],"standalone":["snell"]}`)}}}
+	f := &fakeRunner{stdout: map[string]string{"delete": `{"status":"deleted"}`, "remove": `{"status":"removed"}`}}
+	a, done := newTestAgent(t, p, f)
+	defer done()
+	var spawned [][]string
+	a.spawn = func(args ...string) error { spawned = append(spawned, args); return nil }
+
+	if _, err := a.step(context.Background()); err != nil { // runs the task
+		t.Fatal(err)
+	}
+	want := [][]string{
+		{"node", "delete", "xray", "reality", "a", "--yes", "--if-exists", "--json"},
+		{"node", "delete", "sing-box", "ss2022", "b", "--yes", "--if-exists", "--json"},
+		{"standalone", "remove", "snell", "--yes", "--json"},
+	}
+	var got [][]string
+	for _, c := range f.calls {
+		got = append(got, c.args)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("psm calls\n got %q\nwant %q", got, want)
+	}
+	if len(spawned) != 0 || a.left {
+		t.Fatal("psm-agent started removing itself before the panel had the result")
+	}
+	if _, err := a.step(context.Background()); err != nil { // delivers it
+		t.Fatal(err)
+	}
+	rs := results(t, p.requests[1]["results"])
+	if len(rs) != 1 || !rs[0].OK || string(rs[0].Output) != `{"failed":[],"removed":["a","b","snell"]}` {
+		t.Fatalf("leave result: %+v", rs)
+	}
+	if !a.left || !reflect.DeepEqual(spawned, [][]string{{"agent", "remove", "--yes"}}) {
+		t.Fatalf("after delivering: left=%v spawned=%q", a.left, spawned)
+	}
+}
+
+func TestABadLeavePlanRemovesNothing(t *testing.T) {
+	p := &fakePanel{tasks: []task{
+		{ID: 1, Kind: "agent.leave", Data: json.RawMessage(`{"nodes":[{"core":"xray","protocol":"reality","tag":"ok"},{"core":"xray","protocol":"reality","tag":"--all"}]}`)},
+		{ID: 2, Kind: "agent.leave", Data: json.RawMessage(`{"standalone":["hysteria2"]}`)},
+		{ID: 3, Kind: "agent.leave", Data: json.RawMessage(`[1]`)},
+	}}
+	f := &fakeRunner{}
+	a, done := newTestAgent(t, p, f)
+	defer done()
+	a.spawn = func(args ...string) error { t.Fatalf("spawned %q for a rejected plan", args); return nil }
+	_, _ = a.step(context.Background())
+	_, _ = a.step(context.Background())
+	if len(f.calls) != 0 || a.leaving || a.left {
+		t.Fatalf("calls=%q leaving=%v left=%v", f.calls, a.leaving, a.left)
+	}
+	for _, r := range results(t, p.requests[1]["results"]) {
+		if r.OK || !strings.HasPrefix(r.Error, "rejected by psm-agent") {
+			t.Errorf("task %d: %+v", r.TaskID, r)
+		}
+	}
+}
+
 func TestBadTasksNeverReachPSM(t *testing.T) {
 	p := &fakePanel{tasks: []task{
 		{ID: 1, Kind: "node.add", Core: "v2ray", Protocol: "reality", Data: json.RawMessage(`{"tag":"a","port":1}`)},
@@ -347,7 +429,7 @@ func TestStatusGathersTheServer(t *testing.T) {
 	if len(rs) != 1 || !rs[0].OK || json.Unmarshal(rs[0].Output, &st) != nil {
 		t.Fatalf("status result %+v", rs)
 	}
-	if string(st["nodes"]) != `{"count":0,"items":[]}` || string(st["snell"]) != `{"installed":false}` || string(st["agent_version"]) != `"0.4.0"` {
+	if string(st["nodes"]) != `{"count":0,"items":[]}` || string(st["snell"]) != `{"installed":false}` || string(st["agent_version"]) != `"`+agentVersion+`"` {
 		t.Fatalf("status: %s", rs[0].Output)
 	}
 }

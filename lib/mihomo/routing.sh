@@ -144,7 +144,14 @@ _mh_rule_build() {
         geosite) printf 'GEOSITE,%s,%s' "$value" "$target" ;;
         geoip) printf 'GEOIP,%s,%s%s' "$value" "$target" "$([[ "$no_resolve" == "true" ]] && printf ',no-resolve')" ;;
         ip-cidr) printf 'IP-CIDR,%s,%s%s' "$value" "$target" "$([[ "$no_resolve" == "true" ]] && printf ',no-resolve')" ;;
-        in-name) printf 'IN-NAME,%s,%s' "$value" "$target" ;;
+        in-name)
+            # .geosite (a node's exit, lib/exit_cli.sh): only those sites from
+            # that listener — AND of the two, with an OR of the sites
+            local geo; geo=$(echo "$r" | jq -r '(.geosite // "") | split(",") | map(gsub("^\\s+|\\s+$"; "") | select(length > 0) | "(GEOSITE," + . + ")") | join(",")')
+            if [[ -z "$geo" ]]; then printf 'IN-NAME,%s,%s' "$value" "$target"
+            elif [[ "$geo" == *"),("* ]]; then printf 'AND,((IN-NAME,%s),(OR,(%s))),%s' "$value" "$geo" "$target"
+            else printf 'AND,((IN-NAME,%s),%s),%s' "$value" "$geo" "$target"
+            fi ;;
         ruleset) printf 'RULE-SET,psm-%s,%s' "$value" "$target" ;;
         ads) printf 'GEOSITE,category-ads-all,REJECT' ;;
         quic) printf 'AND,((NETWORK,udp),(DST-PORT,443)),REJECT' ;;

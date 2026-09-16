@@ -31,7 +31,7 @@ Usage:
   psm node delete CORE PROTO TAG --yes
                [--if-exists] [--store-only] [--json]
   psm node export CORE PROTO TAG
-               [--server HOST] [--format uri|json|surge|singbox]
+               [--server HOST] [--format uri|json|surge|singbox|clash]
 
 Cores: xray, sing-box (alias: singbox), mihomo
 Protocols:
@@ -53,20 +53,32 @@ Protocol inputs:
              (x25519 = short links; mlkem768 = PQ authentication, ~1.6 KB link)
   trojan:    --port --domain [--password ...]
   vmess:     --port --domain [--uuid ...] [--path ...]   (WS+TLS)
-  vless:     --port --sni --cert-path --key-path [--uuid ...] [--transport ...] [--path ...]
+  vless:     --port [--sni ...] [--cert-path ... --key-path ...] [--uuid ...] [--transport ...] [--path ...]
              transport: sing-box tcp|ws|grpc|http|httpupgrade|quic; mihomo tcp|ws|grpc|xhttp
   socks:     --port [--listen-addr 127.0.0.1|0.0.0.0] [--username ...] [--password ...]
              (alias: socks5; loopback by default, public listeners require credentials)
   ss2022:    --port [--method ...] [--password ...]
-  hysteria2: --port --sni --cert-path --key-path [--password ...]
+  hysteria2: --port [--sni ...] [--cert-path ... --key-path ...] [--password ...]
              [--obfs-pass ... [--obfs-type salamander|gecko]]
              [--hop-ports START-END]  port hopping: a UDP range redirected to --port
              gecko needs sing-box 1.14+ / mihomo 1.19.26+ / Xray v26.3.27+
-  anytls:    --port --sni --cert-path --key-path [--password ...]
-  tuic:      --port --sni --cert-path --key-path [--uuid ...] [--password ...]
+  anytls:    --port [--sni ...] [--cert-path ... --key-path ...] [--password ...]
+  tuic:      --port [--sni ...] [--cert-path ... --key-path ...] [--uuid ...] [--password ...]
              [--congestion-control bbr|cubic|new_reno]   (TUIC v5, UDP)
   wireguard: --port [--peer-count N]   (sing-box; export prints a wg-quick file per client)
   snell:     --port [--version 5|6 for sing-box; 4|5 for mihomo] [--psk ...]
+
+TLS without --cert-path/--key-path (sing-box/mihomo, and Xray's Hysteria2): the
+SNI's certificate from /etc/nginx/ssl/<sni>/ when PSM has one, else a
+self-signed one (SNI www.bing.com unless given) and insecure=1 in the links.
+The node's port is opened in an enforcing ufw / firewalld / iptables, and
+closed again with the last node on it.
+
+Exits (Xray, sing-box, mihomo): what comes in on this node leaves through
+Cloudflare WARP or the free residential line (VPNGate); the rest goes direct.
+  --exit warp|vpngate|none
+  --exit-sites all|ai|streaming|GEOSITE,...   (default all)
+  --exit-country CC                           the residential line's country the first time (default JP)
 
 Common field options are accepted directly, for example --uuid, --password,
 --method, --listen, --listen-addr, --domain, --sni, --cert-path and --key-path.
@@ -332,13 +344,14 @@ _node_cli_field_name() {
         congestion-control) printf 'congestion_control' ;;
         hop-ports) printf 'hop_ports' ;;
         peer-count) printf 'peer_count' ;;
+        exit-sites) printf 'exit_sites' ;; exit-country) printf 'exit_country' ;;
         *) printf '%s' "$1" ;;
     esac
 }
 
 _node_cli_is_field_opt() {
     case "$1" in
-        tag|port|uuid|password|username|method|listen|listen-addr|public-port|domain|sni|flow|dest|path|mode|version|psk|up|down|masquerade|insecure|server-name|server-names-raw|private-key|public-key|short-id|short-ids|cert-path|key-path|fallback-enabled|obfs-pass|obfs-type|obfs-mode|obfs-host|kcp-seed|kcp-header|reality-transport|transport|vless-enc|shadow-tls-sni|shadow-tls-password|congestion-control|hop-ports|peer-count|ech) return 0 ;;
+        tag|port|uuid|password|username|method|listen|listen-addr|public-port|domain|sni|flow|dest|path|mode|version|psk|up|down|masquerade|insecure|server-name|server-names-raw|private-key|public-key|short-id|short-ids|cert-path|key-path|fallback-enabled|obfs-pass|obfs-type|obfs-mode|obfs-host|kcp-seed|kcp-header|reality-transport|transport|vless-enc|shadow-tls-sni|shadow-tls-password|congestion-control|hop-ports|peer-count|ech|exit|exit-sites|exit-country) return 0 ;;
         *) return 1 ;;
     esac
 }
@@ -765,6 +778,7 @@ _node_cli_validate() {
             case "$mode" in xhttp|upgrade|ws|grpc|reality-layer|httpupgrade|h2|mkcp) ;; *) _node_cli_err "unsupported XHTTP mode: $mode"; return 1 ;; esac
             ;;
     esac
+    _node_cli_exit_check "$json" || return 1
     # A loopback listener for a 443-capable pair only makes sense behind the
     # shared SNI map, which --mount-443 sets up (see _node_cli_mount_apply).
     if [[ "$context" == "add" ]] && _node_cli_fronted_pair "$core" "$proto" \
@@ -811,6 +825,156 @@ _node_cli_check_port_conflict() {
 
 _node_cli_transport() {
     case "$1" in hysteria2|tuic|wireguard) printf udp ;; *) printf tcp ;; esac
+}
+
+# The L4 a node takes clients on, as the firewall sees it: tcp, udp or both.
+_node_cli_fw_l4() {   # <proto> <node json>
+    local n="$2"
+    case "$1" in
+        hysteria2|tuic|wireguard) printf udp ;;
+        ss2022|snell) printf both ;;
+        socks) [[ "$(printf '%s' "$n" | jq -r '.udp // true')" == true ]] && printf both || printf tcp ;;
+        xhttp) [[ "$(printf '%s' "$n" | jq -r '.mode // ""')" == mkcp ]] && printf udp || printf tcp ;;
+        vless) [[ "$(printf '%s' "$n" | jq -r '.transport // "tcp"')" == quic ]] && printf udp || printf tcp ;;
+        *) printf tcp ;;
+    esac
+}
+
+# Clients have to get through the server's firewall. The menus ask before they
+# open a node's port; here nobody can be asked (the PSM panel adds its nodes
+# through this), so the port is opened as the node is made. A rule PSM had to
+# add is written down in $CFG_DIR/firewall-ports, and deleting the last node on
+# that port takes it out again; a port the firewall already let in is left as it was.
+_NODE_CLI_FW_LEDGER="$CFG_DIR/firewall-ports"
+
+_node_cli_fw_open() {   # <proto> <node json>
+    local proto="$1" n="$2" port l4 p
+    [[ "$(printf '%s' "$n" | jq -r '.listen_addr // .listen // ""')" == "127.0.0.1" ]] && return 0
+    declare -f firewall_backend &>/dev/null || source "$LIB_DIR/system.sh"
+    [[ -n "$(firewall_backend)" ]] || return 0
+    port=$(printf '%s' "$n" | jq -r '.port'); l4=$(_node_cli_fw_l4 "$proto" "$n")
+    for p in tcp udp; do
+        [[ "$l4" == both || "$l4" == "$p" ]] || continue
+        grep -qx "$port/$p" "$_NODE_CLI_FW_LEDGER" 2>/dev/null && continue
+        firewall_port_allowed "$port" "$p" && continue
+        if firewall_open_port "$port" "$p" >&2; then
+            mkdir -p "$CFG_DIR" && printf '%s/%s\n' "$port" "$p" >> "$_NODE_CLI_FW_LEDGER"
+        else
+            _node_cli_err "warning: could not open $p/$port in the firewall; clients cannot reach the node until it is open"
+        fi
+    done
+    return 0
+}
+
+_node_cli_fw_close() {   # <node json>, once it has left its store
+    local n="$1" port p others
+    [[ -s "$_NODE_CLI_FW_LEDGER" ]] || return 0
+    port=$(printf '%s' "$n" | jq -r '.port')
+    grep -q "^$port/" "$_NODE_CLI_FW_LEDGER" || return 0
+    # another node on the port (on either L4) keeps it open
+    others=$(_node_cli_collect "" "" 2>/dev/null | jq --argjson p "$port" '[.[] | select(.port == $p)] | length' 2>/dev/null)
+    [[ "$others" == 0 ]] || return 0
+    declare -f firewall_close_port &>/dev/null || source "$LIB_DIR/system.sh"
+    for p in tcp udp; do
+        grep -qx "$port/$p" "$_NODE_CLI_FW_LEDGER" || continue
+        firewall_close_port "$port" "$p"
+        sed -i "\|^$port/$p\$|d" "$_NODE_CLI_FW_LEDGER"
+    done
+    return 0
+}
+
+# sing-box / mihomo TLS nodes (and Xray's Hysteria2) made without certificate
+# files: the SNI's own certificate when PSM has one ($NGINX_SSL_DIR/<domain>/,
+# from the certificate menu), else a self-signed one made here, with
+# insecure = 1 so the node's links tell clients to accept it. The menus do the
+# same (_sb_resolve_tls / _mh_resolve_tls); before this such a node could only
+# be made where certificate files already were, so on a fresh server from the
+# panel it failed.
+_node_cli_tls_auto() {   # <core> <proto> <node json> → node json
+    local core="$1" proto="$2" n="$3" cp kp sni dom dir name crt key
+    case "$core/$proto" in
+        sing-box/hysteria2|sing-box/tuic|sing-box/anytls|sing-box/vless|sing-box/trojan|sing-box/vmess)
+            dir="$SINGBOX_CFG_DIR/certs" ;;
+        mihomo/hysteria2|mihomo/tuic|mihomo/anytls|mihomo/vless|mihomo/trojan|mihomo/vmess)
+            dir="$MIHOMO_CFG_DIR/certs" ;;
+        xray/hysteria2) dir="$CFG_DIR/xray/certs" ;;
+        *) printf '%s' "$n"; return 0 ;;
+    esac
+    cp=$(printf '%s' "$n" | jq -r '.cert_path // ""'); kp=$(printf '%s' "$n" | jq -r '.key_path // ""')
+    if [[ -n "$cp" || -n "$kp" ]]; then
+        if [[ ! -s "$cp" || ! -s "$kp" ]]; then
+            _node_cli_err "certificate files not found: cert_path=${cp:-<none>} key_path=${kp:-<none>} (leave both out for a self-signed certificate)"
+            return 1
+        fi
+        printf '%s' "$n"; return 0
+    fi
+    sni=$(printf '%s' "$n" | jq -r '.sni // ""'); dom=$(printf '%s' "$n" | jq -r '.domain // ""')
+    [[ -n "$dom" ]] || dom="$sni"
+    if [[ -n "$dom" && -s "$NGINX_SSL_DIR/$dom/fullchain.pem" && -s "$NGINX_SSL_DIR/$dom/privkey.pem" ]]; then
+        printf '%s' "$n" | jq -c --arg c "$NGINX_SSL_DIR/$dom/fullchain.pem" --arg k "$NGINX_SSL_DIR/$dom/privkey.pem" \
+            --arg s "$dom" '.cert_path = $c | .key_path = $k | .sni = $s | .insecure = 0'
+        return
+    fi
+    [[ -n "$sni" ]] || sni="www.bing.com"
+    name=$(printf '%s' "$n" | jq -r '.tag' | tr -c 'A-Za-z0-9._\n-' '_')
+    crt="$dir/$name.crt"; key="$dir/$name.key"
+    if [[ ! -s "$key" ]] || ! openssl x509 -in "$crt" -noout -subject 2>/dev/null | grep -q "CN *= *${sni}\$"; then
+        mkdir -p "$dir"
+        openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 3650 \
+            -subj "/CN=$sni" -addext "subjectAltName=DNS:$sni" -keyout "$key" -out "$crt" >/dev/null 2>&1 \
+            || { _node_cli_err "could not make a self-signed certificate in $dir"; return 1; }
+        chmod 600 "$key"
+    fi
+    printf '%s' "$n" | jq -c --arg c "$crt" --arg k "$key" --arg s "$sni" \
+        '.cert_path = $c | .key_path = $k | .sni = $s | .insecure = 1'
+}
+
+# A node's exit (the PSM panel's 出口分流, lib/exit_cli.sh): .exit warp|vpngate
+# (none / empty: no exit), .exit_sites all|ai|streaming|geosite names,
+# .exit_country the residential tunnel's country the first time it is made.
+_node_cli_exit_of() { printf '%s' "$1" | jq -r '(.exit // "") | if . == "none" then "" else . end'; }
+
+_node_cli_exit_check() {   # <node json>
+    local n="$1" ex cc
+    ex=$(_node_cli_exit_of "$n")
+    case "$ex" in "") return 0 ;; warp|vpngate) ;; *) _node_cli_err "exit must be warp, vpngate or none"; return 1 ;; esac
+    source "$LIB_DIR/exit_cli.sh"
+    exit_sites_geosite "$(printf '%s' "$n" | jq -r '.exit_sites // "all"')" >/dev/null || return 1
+    cc=$(printf '%s' "$n" | jq -r '.exit_country // ""')
+    [[ -z "$cc" || "$cc" =~ ^[A-Z]{2}$ ]] || { _node_cli_err "exit_country must be a two-letter code (JP, KR, US …)"; return 1; }
+}
+
+_node_cli_exit_prepare() {   # <core> <node json>: its exit's outbound, before the node is made
+    local ex; ex=$(_node_cli_exit_of "$2")
+    [[ -n "$ex" ]] || return 0
+    source "$LIB_DIR/exit_cli.sh"
+    exit_ensure "$1" "$ex" "$(printf '%s' "$2" | jq -r '.exit_country // ""')"
+}
+
+_node_cli_exit_rules() {   # <core> <tag> <node json>: its exit rule (or none), once it is made
+    local ex; ex=$(_node_cli_exit_of "$3")
+    source "$LIB_DIR/exit_cli.sh"
+    [[ -n "$ex" ]] || exit_node_has "$1" "$2" || return 0
+    exit_node_set "$1" "$2" "$ex" "$(printf '%s' "$3" | jq -r '.exit_sites // "all"')"
+}
+
+# Xray's TLS protocols with a domain (Vision, XHTTP over TLS, Trojan, VMess)
+# use that domain's certificate from the certificate menu. Without it Xray
+# would refuse its whole config and every node on it would go down, so the
+# node is refused here, saying what to do.
+_node_cli_xray_cert_check() {   # <core> <proto> <node json>
+    local core="$1" proto="$2" n="$3" dom
+    [[ "$core" == xray ]] || return 0
+    case "$proto" in
+        vision|trojan|vmess) ;;
+        xhttp) case "$(printf '%s' "$n" | jq -r '.mode // ""')" in mkcp|reality-layer) return 0 ;; esac ;;
+        *) return 0 ;;
+    esac
+    dom=$(printf '%s' "$n" | jq -r '.domain // ""')
+    [[ -n "$dom" ]] || return 0   # _node_cli_validate says what is missing
+    [[ -s "$NGINX_SSL_DIR/$dom/fullchain.pem" && -s "$NGINX_SSL_DIR/$dom/privkey.pem" ]] && return 0
+    _node_cli_err "no certificate for $dom: Xray $proto needs $NGINX_SSL_DIR/$dom/fullchain.pem and privkey.pem. Issue it first (psm menu → SSL certificates), or use REALITY, or sing-box / mihomo, which make a self-signed certificate"
+    return 1
 }
 
 # Core/protocol pairs that support Nginx 443 SNI fronting (listen_addr
@@ -1192,8 +1356,16 @@ _node_cli_cmd_add() {
     # desired public fields therefore resolves to the exact existing node.
     [[ -n "$existing" ]] && node=$(jq -cn --argjson old "$existing" --argjson patch "$node" '$old * $patch')
     node=$(_node_cli_defaults "$core" "$proto" "$node") || { _node_cli_lock_release; return 1; }
+    if [[ "$store_only" != "true" ]]; then
+        node=$(_node_cli_tls_auto "$core" "$proto" "$node") || { _node_cli_lock_release; return 2; }
+    fi
     node=$(_node_cli_ech "$core" "$proto" "$node") || { _node_cli_lock_release; return 2; }
     _node_cli_validate "$core" "$proto" "$node" add || { _node_cli_lock_release; return 2; }
+    # after the schema: what is wrong with the request itself is more useful
+    # to hear than a missing certificate
+    if [[ "$store_only" != "true" ]]; then
+        _node_cli_xray_cert_check "$core" "$proto" "$node" || { _node_cli_lock_release; return 2; }
+    fi
     tag=$(printf '%s' "$node" | jq -r '.tag'); port=$(printf '%s' "$node" | jq -r '.port')
     if [[ "$store_only" != "true" ]]; then
         _node_cli_probe_reality "$core" "$proto" "$node" "$existing" || { _node_cli_lock_release; return 2; }
@@ -1226,6 +1398,10 @@ _node_cli_cmd_add() {
             old_port=$(printf '%s' "$existing" | jq -r '.port')
         fi
     fi
+    if [[ "$store_only" != "true" ]]; then
+        # the exit first: a residential line that does not answer leaves nothing half made
+        _node_cli_exit_prepare "$core" "$node" || { _node_cli_lock_release; return 1; }
+    fi
     new=$(printf '%s' "$old" | jq -c --arg tag "$tag" --argjson node "$node" 'del(.[] | select(.tag == $tag)) + [$node]') || { _node_cli_lock_release; return 1; }
     _node_cli_commit_store "$core" "$proto" "$new" "$(printf '%s' "$state" | jq -r '.store_only|if . then 1 else 0 end')" || { _node_cli_lock_release; return 1; }
     if [[ -n "$mount_key" ]]; then
@@ -1239,6 +1415,13 @@ _node_cli_cmd_add() {
         [[ -n "$old_mount_key" && "$old_mount_key" != "$mount_key" ]] && _node_cli_mount_remove "$old_mount_key" "$old_port"
     fi
     _node_cli_lock_release
+    if [[ "$store_only" != "true" ]]; then
+        _node_cli_fw_open "$proto" "$node"
+        if [[ -n "$existing" && "$(printf '%s' "$existing" | jq -r '.port')" != "$port" ]]; then
+            _node_cli_fw_close "$existing"
+        fi
+        _node_cli_exit_rules "$core" "$tag" "$node" || return 1
+    fi
     envelope=$(printf '[%s]' "$node" | _node_cli_envelope "$core" "$proto" | jq -c '.[0]')
     changed=created; [[ -n "$existing" ]] && changed=replaced
     _node_cli_result "$changed" "$envelope" "$(printf '%s' "$state" | jq -r '.json|if . then 1 else 0 end')" "$(printf '%s' "$state" | jq -r '.show_secrets|if . then 1 else 0 end')"
@@ -1274,9 +1457,15 @@ _node_cli_cmd_update() {
              and ($new.port != $old.port)
         then $new | .public_port = $new.port
         else $new end') || return 1
+    if [[ "$(printf '%s' "$state" | jq -r '.store_only')" != "true" ]]; then
+        node=$(_node_cli_tls_auto "$core" "$proto" "$node") || return 2
+    fi
     node=$(_node_cli_ech "$core" "$proto" "$node") || return 2
     _node_cli_validate_update_side_effects "$core" "$proto" "$old_node" "$node" || return 2
     _node_cli_validate "$core" "$proto" "$node" update || return 2
+    if [[ "$(printf '%s' "$state" | jq -r '.store_only')" != "true" ]]; then
+        _node_cli_xray_cert_check "$core" "$proto" "$node" || return 2
+    fi
     port=$(printf '%s' "$node" | jq -r '.port')
     local upd_store_only mount_key="" old_mount_key="" old_port
     upd_store_only=$(printf '%s' "$state" | jq -r '.store_only')
@@ -1306,6 +1495,9 @@ _node_cli_cmd_update() {
             _node_cli_mount_precheck "$mount_key" "$port" "$old_port" || { _node_cli_lock_release; return 1; }
         fi
     fi
+    if [[ "$upd_store_only" != "true" ]]; then
+        _node_cli_exit_prepare "$core" "$node" || { _node_cli_lock_release; return 1; }
+    fi
     new=$(printf '%s' "$store" | jq -c --arg tag "$tag" --argjson node "$node" 'map(if .tag == $tag then $node else . end)') || { _node_cli_lock_release; return 1; }
     _node_cli_commit_store "$core" "$proto" "$new" "$(printf '%s' "$state" | jq -r '.store_only|if . then 1 else 0 end')" || { _node_cli_lock_release; return 1; }
     if [[ -n "$mount_key" ]]; then
@@ -1318,6 +1510,13 @@ _node_cli_cmd_update() {
         [[ "$old_mount_key" != "$mount_key" ]] && _node_cli_mount_remove "$old_mount_key" "$old_port"
     fi
     _node_cli_lock_release
+    if [[ "$upd_store_only" != "true" ]]; then
+        _node_cli_fw_open "$proto" "$node"
+        if [[ "$(printf '%s' "$old_node" | jq -r '.port')" != "$port" ]]; then
+            _node_cli_fw_close "$old_node"
+        fi
+        _node_cli_exit_rules "$core" "$tag" "$node" || return 1
+    fi
     envelope=$(printf '[%s]' "$node" | _node_cli_envelope "$core" "$proto" | jq -c '.[0]')
     _node_cli_result updated "$envelope" "$(printf '%s' "$state" | jq -r '.json|if . then 1 else 0 end')" "$(printf '%s' "$state" | jq -r '.show_secrets|if . then 1 else 0 end')"
 }
@@ -1359,6 +1558,12 @@ _node_cli_cmd_delete() {
     fi
     _node_cli_lock_release
     _node_cli_cleanup_deleted_metadata "$tag"
+    if [[ "$(printf '%s' "$state" | jq -r '.store_only')" != "true" ]]; then
+        _node_cli_fw_close "$old_node"
+        # its exit rule goes with it (the exit itself stays, other nodes may use it)
+        source "$LIB_DIR/exit_cli.sh"
+        if exit_node_has "$core" "$tag"; then exit_node_set "$core" "$tag" "" || true; fi
+    fi
     envelope=$(printf '[%s]' "$old_node" | _node_cli_envelope "$core" "$proto" | jq -c '.[0]')
     _node_cli_result deleted "$envelope" "$(printf '%s' "$state" | jq -r '.json|if . then 1 else 0 end')" "$(printf '%s' "$state" | jq -r '.show_secrets|if . then 1 else 0 end')"
 }
@@ -1406,6 +1611,8 @@ _node_cli_export_uri() {
                 "$uuid" "$server" "$port" "$(_node_cli_urlencode "$(printf '%s' "$n" | jq -r '.vless_encryption // "none"')")" \
                 "$(_node_cli_urlencode "$sni")" "$mode"
             [[ -n "$flow" ]] && printf '&flow=%s' "$(_node_cli_urlencode "$flow")"
+            # a self-signed certificate: the client must be told to accept it (as the menus' links do)
+            [[ "$(printf '%s' "$n" | jq -r '.insecure // 0 | tostring')" =~ ^(1|true)$ ]] && printf '&allowInsecure=1'
             case "$mode" in
                 grpc)          printf '&serviceName=%s' "$(_node_cli_urlencode "${path#/}")" ;;
                 ws|h2|httpupgrade|xhttp)
@@ -1455,6 +1662,7 @@ _node_cli_export_uri() {
                 "$(_node_cli_urlencode "$password")" "$server" "$port" \
                 "$(_node_cli_urlencode "$domain")"
             [[ "$core" == "xray" ]] && printf '&alpn=%s' "$(_node_cli_urlencode "h2,http/1.1")"
+            [[ "$(printf '%s' "$n" | jq -r '.insecure // 0 | tostring')" =~ ^(1|true)$ ]] && printf '&allowInsecure=1'
             printf '#%s\n' "$(_node_cli_urlencode "PSM-$tag")"
             ;;
         ss2022)
@@ -1563,6 +1771,13 @@ _node_cli_cmd_export() {
             local ob; ob=$(_sub_sb_outbound "$core" "$proto" "$n" "$server" "$tag" || true)
             [[ -n "$ob" ]] || { _node_cli_err "$core/$proto has no sing-box client outbound; use --format uri"; return 2; }
             printf '%s\n' "$ob" | jq -c '.'
+            ;;
+        clash|mihomo)
+            # The node as one mihomo proxy (the PSM panel's Clash subscription)
+            declare -f _sub_mh_proxy &>/dev/null || source "$LIB_DIR/subscribe.sh"
+            local px; px=$(_sub_mh_proxy "$core" "$proto" "$n" "$server" "$tag" || true)
+            [[ -n "$px" ]] || { _node_cli_err "$core/$proto has no mihomo proxy of its own (its share link imports as it is); use --format uri"; return 2; }
+            printf '%s\n' "$px" | jq -c '.'
             ;;
         ech)
             # The ECH config clients need (mihomo ech-opts.config); not part of any share link

@@ -65,9 +65,11 @@ _sni_setup_engine() {
     return 0
 }
 
+# PSM_SNI_ENGINE / PSM_SNI_KEY (psm sni find --key-stdin) take the place of
+# the engine and key saved by the menu, for that one search.
 _sni_have_engine() {
-    local eng; eng=$(state_get sni_engine)
-    [[ -n "$eng" && -n "$(state_get "${eng}_key")" ]]
+    local eng; eng=${PSM_SNI_ENGINE:-$(state_get sni_engine)}
+    [[ -n "$eng" && -n "${PSM_SNI_KEY:-$(state_get "${eng}_key")}" ]]
 }
 
 # ── 自身 ASN / 国家（免 key）───────────────────────────────────────────────────
@@ -118,9 +120,9 @@ _sni_self_asn_country() {
 }
 
 # ── 各引擎 curl 封装（对照 cloudflare.sh 的 _cf_curl 风格）────────────────────
-_netlas_curl()  { curl -s --max-time 25 -H "X-API-Key: $(state_get netlas_key)"  "$@"; }
-_quake_curl()   { curl -s --max-time 25 -H "X-QuakeToken: $(state_get quake_key)" -H "Content-Type: application/json" "$@"; }
-_zoomeye_curl() { curl -s --max-time 25 -H "API-KEY: $(state_get zoomeye_key)" -H "Content-Type: application/json" "$@"; }
+_netlas_curl()  { curl -s --max-time 25 -H "X-API-Key: ${PSM_SNI_KEY:-$(state_get netlas_key)}"  "$@"; }
+_quake_curl()   { curl -s --max-time 25 -H "X-QuakeToken: ${PSM_SNI_KEY:-$(state_get quake_key)}" -H "Content-Type: application/json" "$@"; }
+_zoomeye_curl() { curl -s --max-time 25 -H "API-KEY: ${PSM_SNI_KEY:-$(state_get zoomeye_key)}" -H "Content-Type: application/json" "$@"; }
 _fofa_curl()    { curl -s --max-time 25 "$@"; }   # FOFA 的 key 作为 query 参数传递
 
 # ── 额度预检（best-effort；账号信息端点字段随版本变化，取不到不阻断）──────────
@@ -129,7 +131,7 @@ _sni_engine_quota() {
     local engine="$1" resp="" remain=""
     case "$engine" in
         netlas)
-            resp=$(_netlas_curl "https://app.netlas.io/api/users/current/" 2>/dev/null) || true
+            resp=$(_netlas_curl "${SNI_NETLAS_BASE:-https://app.netlas.io}/api/users/current/" 2>/dev/null) || true
             remain=$(printf '%s' "$resp" | jq -r '
                 (.total_requests_left // .requests_left // .available // .month_downloads_left // empty)' 2>/dev/null) || true
             ;;
@@ -144,7 +146,7 @@ _sni_engine_quota() {
                 (.quota_info.remain_total_quota // .quota_info.remain_free_quota // empty)' 2>/dev/null) || true
             ;;
         fofa)
-            resp=$(_fofa_curl "https://fofa.info/api/v1/info/my?key=$(state_get fofa_key)" 2>/dev/null) || true
+            resp=$(_fofa_curl "https://fofa.info/api/v1/info/my?key=${PSM_SNI_KEY:-$(state_get fofa_key)}" 2>/dev/null) || true
             remain=$(printf '%s' "$resp" | jq -r '(.remain_api_query // .fofa_point // empty)' 2>/dev/null) || true
             ;;
     esac
@@ -185,7 +187,8 @@ _sni_normalize_pairs() {
 # Netlas：GET /api/responses/?q=<urlenc>&start=0，头 X-API-Key
 _netlas_query() {
     local q="$1" resp=""
-    resp=$(_netlas_curl -G "https://app.netlas.io/api/responses/" \
+    # SNI_NETLAS_BASE: another Netlas-compatible endpoint (the tests' stand-in)
+    resp=$(_netlas_curl -G "${SNI_NETLAS_BASE:-https://app.netlas.io}/api/responses/" \
         --data-urlencode "q=${q}" --data "start=0" 2>/dev/null) || true
     [[ -z "$resp" ]] && return 0
     # Netlas 的证书字段（subject.common_name / names / subject_alternative_name）常为
@@ -280,7 +283,7 @@ _fofa_query() {
     local q="$1" max="$2" b64="" resp=""
     b64=$(printf '%s' "$q" | base64 | tr -d '\n') || return 0
     resp=$(_fofa_curl -G "https://fofa.info/api/v1/search/all" \
-        --data-urlencode "key=$(state_get fofa_key)" \
+        --data-urlencode "key=${PSM_SNI_KEY:-$(state_get fofa_key)}" \
         --data-urlencode "qbase64=${b64}" \
         --data "fields=ip,port,domain,host,as_number" \
         --data "size=${max}" 2>/dev/null) || true
@@ -337,7 +340,7 @@ _sni_cache_put() {
 # ── 分派：按 sni_engine 调对应后端（命中缓存优先）────────────────────────────
 _sni_discover_pairs() {
     local max="${1:-40}"
-    local engine; engine=$(state_get sni_engine)
+    local engine; engine=${PSM_SNI_ENGINE:-$(state_get sni_engine)}
     [[ -z "$engine" ]] && return 1
 
     local cached; cached=$(_sni_cache_get "$SNI_SELF_ASN" "$engine") || true
