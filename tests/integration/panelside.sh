@@ -43,7 +43,10 @@ chk "a node sing-box has no outbound for says so (2)" bash -c \
 sec "deleting the last Xray SS2022 node closes its port"
 # it used to stay in Xray's live config, listening, although PSM no longer listed it
 chk "psm core install xray" bash -c 'timeout 600 psm core install xray --json </dev/null | jq -e ".installed == true"'
-chk "two Xray SS2022 nodes" bash -c 'psm node add xray ss2022 --tag xs1 --port 30401 --json >/dev/null && psm node add xray ss2022 --tag xs2 --port 30402 --json >/dev/null && listening 30401 && listening 30402'
+# Xray rebinds while it restarts: wait for the ports rather than sampling once
+chk "two Xray SS2022 nodes" bash -c 'psm node add xray ss2022 --tag xs1 --port 30401 --json >/dev/null && psm node add xray ss2022 --tag xs2 --port 30402 --json >/dev/null
+    for _ in $(seq 1 15); do listening 30401 && listening 30402 && exit 0; sleep 1; done
+    echo "30401=$(listening 30401 && echo up || echo down) 30402=$(listening 30402 && echo up || echo down)"; exit 1'
 chk "deleting one closes its port and keeps the other" bash -c 'psm node delete xray ss2022 xs1 --yes --json >/dev/null && sleep 2 && ! listening 30401 && listening 30402'
 chk "deleting the last one closes its port too" bash -c 'psm node delete xray ss2022 xs2 --yes --json >/dev/null && sleep 2 && ! listening 30402'
 chk "… and no shadowsocks inbound is left in Xray" bash -c '! jq -e ".inbounds[] | select(.protocol == \"shadowsocks\")" /usr/local/etc/xray/config.json'
