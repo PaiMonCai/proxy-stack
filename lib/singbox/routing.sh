@@ -241,9 +241,11 @@ _sb_ruleset_def() {
     local cur; cur=$(_sb_installed_version)
     local detour
     if [[ -n "$cur" ]] && _sb_version_ge "$cur" "1.14.0"; then
-        # 1.14 拒绝把下载绕行指到 PSM 那个空的 direct 出站（"detour to an empty
-        # direct outbound makes no sense"）。不写这个字段即可：默认就是直连。
-        detour='{}'
+        # 1.14 实测（三种写法逐个启动验证）：
+        #   detour:"direct"  → 启动失败（"detour to an empty direct outbound"）
+        #   不写 / http_client:{} → 告警「隐式默认 HTTP 客户端，1.16 移除」
+        #   http_client:{detour:""} → 干净：显式声明「就用默认出站」
+        detour='{"http_client":{"detour":""}}'
     else
         detour='{"download_detour":"direct"}'
     fi
