@@ -194,6 +194,104 @@ exit_node_set() {   # <core> <tag> <warp|vpngate|""> [sites]
     fi
 }
 
+# ── The menus' per-node exit ─────────────────────────────────────────────────
+# What `psm node add --exit …` writes from the command line, offered as one
+# entry in each core's menu: pick one of that core's nodes, then its exit and
+# what goes through it. It ends in exit_node_set, the very function the command
+# line and the panel use, so a node set up here is the same thing — and an
+# existing node can be changed, or its exit cleared, the same way.
+
+# <core> <tag> → "<target>\t<sites>" when that node has an exit rule.
+_exit_menu_rule_of() {
+    local f
+    case "$1" in
+        xray) f="$CFG_DIR/xray/routing_rules.json" ;;
+        sing-box) f="$CFG_DIR/singbox/routing_rules.json" ;;
+        mihomo) f="$CFG_DIR/mihomo/routing.json" ;;
+        *) return 1 ;;
+    esac
+    [[ -s "$f" ]] || return 0
+    jq -r --arg t "$2" '
+        [(if type == "object" then .rules else . end)[]? | select(.node == $t)][0]
+        | if . == null then empty
+          else ((.target // .outbound_tag // "?") + " " + ((.geosite // "") | if . == "" then "all" else . end))
+          end' "$f" 2>/dev/null
+}
+
+exit_menu_node() {   # <core>
+    local core="$1" nodes count sel tag ex scope sites cc cur i=0
+    local -a _tags
+    source "$LIB_DIR/node_cli.sh"
+    nodes=$(_node_cli_collect "$core" "") || return 1
+    count=$(printf '%s' "$nodes" | jq 'length' 2>/dev/null || echo 0)
+    (( count == 0 )) && { log_warn "$(t exm.none)"; return 0; }
+
+    echo -e "\n${BOLD}${BLUE}══ $(t exm.title) ════════════════${NC}"
+    local p tg po
+    while IFS=$'\t' read -r p tg po; do
+        i=$((i+1)); _tags+=("$tg")
+        cur=$(_exit_menu_rule_of "$core" "$tg")
+        if [[ -n "$cur" ]]; then
+            printf "  ${CYAN}%2d.${NC} %-12s %-22s port=%-6s ${GREEN}%s${NC}\n" "$i" "[$p]" "$tg" "$po" "$cur"
+        else
+            printf "  ${CYAN}%2d.${NC} %-12s %-22s port=%-6s ${YELLOW}%s${NC}\n" "$i" "[$p]" "$tg" "$po" "$(t exm.no_exit)"
+        fi
+    done < <(printf '%s' "$nodes" | jq -r '.[] | [.protocol, .tag, (.port // "-")] | @tsv')
+    echo -e "${BOLD}${BLUE}════════════════════════════════════════${NC}"
+
+    read -rp "$(echo -e "${CYAN}$(t exm.ask_node): ${NC}")" sel
+    [[ -z "$sel" || "$sel" == "0" ]] && return 0
+    if ! [[ "$sel" =~ ^[0-9]+$ ]] || (( sel < 1 || sel > i )); then
+        log_warn "$(t exm.invalid)"; return 0
+    fi
+    tag="${_tags[$((sel-1))]}"
+
+    echo ""
+    echo -e "${BOLD}$(t exm.exit_title "$tag")${NC}"
+    echo "  $(t exm.exit0)"
+    echo "  $(t exm.exit1)"
+    echo "  $(t exm.exit2)"
+    read -rp "$(echo -e "${CYAN}$(t exm.ask_exit)${NC}")" ex
+    case "${ex:-0}" in
+        0) if exit_node_set "$core" "$tag" ""; then log_ok "$(t exm.cleared "$tag")"; else log_error "$(t exm.fail)"; return 1; fi
+           return 0 ;;
+        1) ex=warp ;;
+        2) ex=vpngate ;;
+        *) log_warn "$(t exm.invalid)"; return 0 ;;
+    esac
+
+    echo ""
+    echo -e "${BOLD}$(t exm.scope_title)${NC}"
+    echo "  $(t exm.scope1)"
+    echo "  $(t exm.scope2)"
+    echo "  $(t exm.scope3)"
+    echo "  $(t exm.scope4)"
+    echo "  $(t exm.scope5)"
+    read -rp "$(echo -e "${CYAN}$(t exm.ask_scope)${NC}")" scope
+    case "${scope:-1}" in
+        1) sites=ai ;;
+        2) sites=streaming ;;
+        3) sites="ai,streaming" ;;
+        4) sites=all ;;
+        5) ask sites "$(t exm.ask_geosite)" ""
+           [[ -n "$sites" ]] || { log_warn "$(t exm.invalid)"; return 0; } ;;
+        *) log_warn "$(t exm.invalid)"; return 0 ;;
+    esac
+    exit_sites_geosite "$sites" >/dev/null || return 1
+
+    cc=""
+    if [[ "$ex" == vpngate ]]; then
+        ask cc "$(t exm.ask_country)" "$EXIT_VPNGATE_COUNTRY"
+        cc="${cc^^}"
+        [[ "$cc" =~ ^[A-Z]{2}$ ]] || { _exit_err "country must be a two-letter code (JP, KR, US …): $cc"; return 1; }
+    fi
+
+    log_info "$(t exm.preparing)"
+    exit_ensure "$core" "$ex" "$cc" || { log_error "$(t exm.fail)"; return 1; }
+    exit_node_set "$core" "$tag" "$ex" "$sites" || { log_error "$(t exm.fail)"; return 1; }
+    log_ok "$(t exm.done "$tag" "$sites" "$ex")"
+}
+
 # ── psm exit ─────────────────────────────────────────────────────────────────
 _exit_cli_usage() {
     cat <<'EOF'
