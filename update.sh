@@ -99,6 +99,7 @@ psm_update_geofiles() {
     svc_restart xray 2>/dev/null || true
 }
 
+# shellcheck disable=SC2120  # optional target; the menu calls it without one
 psm_update() {
     require_root
 
