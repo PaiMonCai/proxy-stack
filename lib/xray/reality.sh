@@ -335,7 +335,12 @@ reality_add_node() {
     echo -e "  $(t xray.reality.desc2)"
     echo -e "  $(t xray.reality.desc3)${NC}\n"
 
-    local tag port uuid flow server_names_raw dest
+    # Empty, not merely declared: `local x` leaves x unset, and the camouflage
+    # branch below reads server_names_raw before anything assigns it whenever
+    # the own-domain question is answered no (its default) — under `set -u`
+    # that ends the script with "unbound variable" instead of adding the node.
+    local tag port uuid flow
+    local server_names_raw="" dest=""
     local count; count=$(_reality_count)
     local own_domain=0 domain=""
     # dest 被判定为共享 CDN 前端且使用者选择继续时置 1 → 给该节点开启回落限速兜底
