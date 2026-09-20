@@ -52,3 +52,5 @@ MSG[doctor.msg.hop_missing]="Нет правил перескока портов
 MSG[doctor.msg.core_root_old_systemd]="%s работает от root: systemd здесь старше 231 и не может запустить ядро без привилегий"
 MSG[doctor.msg.jq_ok]="Версия jq %s"
 MSG[doctor.msg.jq_old]="jq %s считает -e на пустом вводе истиной; PSM нужен 1.7 или новее"
+MSG[doctor.msg.tun_ok]="/dev/net/tun is there (virtualisation: %s): both WARP and the free residential exit can be used"
+MSG[doctor.msg.tun_missing]="No /dev/net/tun (virtualisation: %s): the free residential exit cannot work; ask the host to enable TUN, or use the WARP exit, which does not need it"

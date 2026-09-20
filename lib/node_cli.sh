@@ -215,6 +215,18 @@ _node_cli_core_bin() {
     esac
 }
 
+# <core>: the core is installed and has a config. _node_cli_commit_store checks
+# this too, but only once the node is about to be written — too late for a node
+# with an exit, whose WARP registration or residential tunnel would already have
+# been made for a node that then cannot exist.
+_node_cli_require_core() {
+    local core="$1" bin live
+    bin=$(_node_cli_core_bin "$core")
+    live=$(_node_cli_live_cfg "$core")
+    [[ -x "$bin" ]] || { _node_cli_err "$core is not installed: $bin"; return 1; }
+    [[ -f "$live" ]] || { _node_cli_err "$core config does not exist: $live"; return 1; }
+}
+
 _node_cli_read_store() {
     local path="$1"
     [[ -f "$path" ]] || { printf '[]'; return 0; }
@@ -1399,7 +1411,12 @@ _node_cli_cmd_add() {
         fi
     fi
     if [[ "$store_only" != "true" ]]; then
-        # the exit first: a residential line that does not answer leaves nothing half made
+        # The core has to be there before the exit: preparing one registers WARP
+        # or dials the residential line, and _node_cli_commit_store would only
+        # then find the core missing — leaving that behind for a node that was
+        # never made, and reporting it as an exit failure.
+        _node_cli_require_core "$core" || { _node_cli_lock_release; return 1; }
+        # the exit next: a residential line that does not answer leaves nothing half made
         _node_cli_exit_prepare "$core" "$node" || { _node_cli_lock_release; return 1; }
     fi
     new=$(printf '%s' "$old" | jq -c --arg tag "$tag" --argjson node "$node" 'del(.[] | select(.tag == $tag)) + [$node]') || { _node_cli_lock_release; return 1; }
@@ -1457,6 +1474,15 @@ _node_cli_cmd_update() {
              and ($new.port != $old.port)
         then $new | .public_port = $new.port
         else $new end') || return 1
+    # REALITY 改伪装域名时 server_names_raw 必须跟着走：它是原始的逗号清单，
+    # 而 Xray 的 inbound 写的是 .server_names_raw // .server_name —— 只改
+    # server_name 的话内核里仍是旧域名，客户端按新域名握手就连不上。
+    # 调用方显式传了 --server-names-raw 时以调用方为准（多 SNI 的用法）。
+    node=$(jq -cn --argjson new "$node" --argjson patch "$patch" '
+        if ($patch | has("server_names_raw")) then $new
+        elif ($patch | has("server_name")) and ($new | has("server_names_raw"))
+        then $new | .server_names_raw = $new.server_name
+        else $new end') || return 1
     if [[ "$(printf '%s' "$state" | jq -r '.store_only')" != "true" ]]; then
         node=$(_node_cli_tls_auto "$core" "$proto" "$node") || return 2
     fi
@@ -1496,6 +1522,7 @@ _node_cli_cmd_update() {
         fi
     fi
     if [[ "$upd_store_only" != "true" ]]; then
+        _node_cli_require_core "$core" || { _node_cli_lock_release; return 1; }
         _node_cli_exit_prepare "$core" "$node" || { _node_cli_lock_release; return 1; }
     fi
     new=$(printf '%s' "$store" | jq -c --arg tag "$tag" --argjson node "$node" 'map(if .tag == $tag then $node else . end)') || { _node_cli_lock_release; return 1; }

@@ -105,6 +105,34 @@ psm_update() {
     echo -e "\n${BOLD}${CYAN}$(t update.header)${NC}\n"
     psm_check_version
 
+    # `psm --update <what>`: no questions, for psm-agent, the panel and cron.
+    # Without it the menu below reads from a stdin that is not there, and the
+    # caller gets the menu and a non-zero exit instead of an update.
+    local target="${1:-}"
+    if [[ -n "$target" ]]; then
+        case "$target" in
+            scripts|psm)        psm_update_scripts ;;
+            xray)               psm_update_xray ;;
+            singbox|sing-box)   psm_update_singbox ;;
+            mihomo)             psm_update_mihomo ;;
+            hysteria2|hy2)      psm_update_hysteria2 ;;
+            nginx)              psm_update_nginx ;;
+            geo|geofiles)       psm_update_geofiles ;;
+            all)
+                psm_update_scripts
+                psm_update_xray
+                psm_update_singbox
+                psm_update_mihomo
+                psm_update_hysteria2
+                psm_update_nginx
+                psm_update_geofiles
+                ;;
+            *)  printf 'psm update: unknown target: %s (scripts, xray, singbox, mihomo, hysteria2, nginx, geo, all)\n' "$target" >&2
+                return 2 ;;
+        esac
+        return $?
+    fi
+
     show_menu "$(t update.menu.title)" \
         "$(t update.menu.scripts)" \
         "$(t update.menu.xray)" \

@@ -635,7 +635,8 @@ xray_menu() {
             "$(t xray.menu.status)" \
             "$(t xray.menu.logs)" \
             "$(t xray.menu.share)" \
-            "$(t exm.menu_item)"
+            "$(t exm.menu_item)" \
+            "$(t nme.menu_item)"
 
         case "$MENU_CHOICE" in
             1)  xray_install;    press_enter ;;
@@ -654,6 +655,7 @@ xray_menu() {
             11) xray_logs ;;
             12) _xray_require_installed && { _xray_view_all_nodes; press_enter; } ;;
             13) _xray_require_installed && { source "$LIB_DIR/exit_cli.sh"; exit_menu_node xray; press_enter; } ;;
+            14) _xray_require_installed && { source "$LIB_DIR/exit_cli.sh"; node_menu_edit xray; press_enter; } ;;
             0)  return ;;
         esac
     done

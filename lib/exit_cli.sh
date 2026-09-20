@@ -292,6 +292,87 @@ exit_menu_node() {   # <core>
     log_ok "$(t exm.done "$tag" "$sites" "$ex")"
 }
 
+# ── The menus' node editor ───────────────────────────────────────────────────
+# What `psm node update` does from the command line, offered as one entry in
+# each core's menu: pick one of that core's nodes, then the field to change.
+# The protocols' own menus only ever offered a subset (AnyTLS could change its
+# password but not its port; Hysteria2, TUIC, VLESS and WireGuard on sing-box
+# and mihomo offered nothing at all), so a node made in the menus could not be
+# edited there. This ends in _node_cli_cmd_update, the same code path the
+# command line and the panel use, so every core and protocol behaves alike.
+
+# <core> <proto> → the fields worth offering, as "option<TAB>label" lines.
+_node_menu_fields() {
+    local core="$1" proto="$2"
+    printf 'port\t%s\n' "$(t nme.f.port)"
+    case "$proto" in
+        reality)
+            printf 'uuid\t%s\nserver-name\t%s\ndest\t%s\nshort-ids\t%s\n' \
+                "$(t nme.f.uuid)" "$(t nme.f.server_name)" "$(t nme.f.dest)" "$(t nme.f.short_ids)" ;;
+        vision|xhttp|vmess|vless)
+            printf 'uuid\t%s\ndomain\t%s\n' "$(t nme.f.uuid)" "$(t nme.f.domain)" ;;
+        anytls|trojan|hysteria2|snell)
+            printf 'password\t%s\nsni\t%s\n' "$(t nme.f.password)" "$(t nme.f.sni)" ;;
+        tuic)
+            printf 'uuid\t%s\npassword\t%s\nsni\t%s\n' "$(t nme.f.uuid)" "$(t nme.f.password)" "$(t nme.f.sni)" ;;
+        ss2022)
+            printf 'password\t%s\n' "$(t nme.f.password)" ;;
+        socks)
+            printf 'username\t%s\npassword\t%s\n' "$(t nme.f.username)" "$(t nme.f.password)" ;;
+    esac
+    printf 'public-port\t%s\n' "$(t nme.f.public_port)"
+}
+
+node_menu_edit() {   # <core>
+    local core="$1" nodes count sel i=0 tag proto opt label value
+    local -a _tags _protos _opts
+    source "$LIB_DIR/node_cli.sh"
+    nodes=$(_node_cli_collect "$core" "") || return 1
+    count=$(printf '%s' "$nodes" | jq 'length' 2>/dev/null || echo 0)
+    (( count == 0 )) && { log_warn "$(t nme.none)"; return 0; }
+
+    echo -e "\n${BOLD}${BLUE}══ $(t nme.title) ════════════════${NC}"
+    local p tg po
+    while IFS=$'\t' read -r p tg po; do
+        i=$((i+1)); _tags+=("$tg"); _protos+=("$p")
+        printf "  ${CYAN}%2d.${NC} %-12s %-22s port=%s\n" "$i" "[$p]" "$tg" "$po"
+    done < <(printf '%s' "$nodes" | jq -r '.[] | [.protocol, .tag, (.port // "-")] | @tsv')
+    echo -e "${BOLD}${BLUE}════════════════════════════════════════${NC}"
+
+    read -rp "$(echo -e "${CYAN}$(t nme.ask_node): ${NC}")" sel
+    [[ -z "$sel" || "$sel" == "0" ]] && return 0
+    if ! [[ "$sel" =~ ^[0-9]+$ ]] || (( sel < 1 || sel > i )); then log_warn "$(t nme.invalid)"; return 0; fi
+    tag="${_tags[$((sel-1))]}"; proto="${_protos[$((sel-1))]}"
+
+    echo ""
+    echo -e "${BOLD}$(t nme.field_title "$tag")${NC}"
+    i=0
+    while IFS=$'\t' read -r opt label; do
+        i=$((i+1)); _opts+=("$opt")
+        printf "  ${CYAN}%2d.${NC} %s\n" "$i" "$label"
+    done < <(_node_menu_fields "$core" "$proto")
+    printf "  ${CYAN} 0.${NC} %s\n" "$(t common.back_exit)"
+    read -rp "$(echo -e "${CYAN}$(t nme.ask_field): ${NC}")" sel
+    [[ -z "$sel" || "$sel" == "0" ]] && return 0
+    if ! [[ "$sel" =~ ^[0-9]+$ ]] || (( sel < 1 || sel > i )); then log_warn "$(t nme.invalid)"; return 0; fi
+    opt="${_opts[$((sel-1))]}"
+
+    echo ""
+    echo -e "  $(t nme.blank_hint)"
+    ask value "$(t nme.ask_value "$opt")" ""
+    # Nothing typed: leave the node alone. An empty value would be written as an
+    # empty field — a node with no password — rather than meaning "keep it".
+    [[ -n "$value" ]] || { log_info "$(t nme.unchanged)"; return 0; }
+    # Positional core/protocol/tag: _node_cli_cmd_update reads its target that
+    # way, and takes the tag from $1 only when it is not an option.
+    if _node_cli_cmd_update "$core" "$proto" "$tag" "--$opt" "$value"; then
+        log_ok "$(t nme.done "$tag" "$opt")"
+    else
+        log_error "$(t nme.fail)"
+        return 1
+    fi
+}
+
 # ── psm exit ─────────────────────────────────────────────────────────────────
 _exit_cli_usage() {
     cat <<'EOF'

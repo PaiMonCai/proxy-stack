@@ -637,7 +637,8 @@ mh_menu() {
             "$(t mh.menu.logs)" \
             "$(t mh.menu.share)" \
             "$(t common.ech.title)" \
-            "$(t exm.menu_item)"
+            "$(t exm.menu_item)" \
+            "$(t nme.menu_item)"
 
         case "$MENU_CHOICE" in
             1)  mh_install;    press_enter ;;
@@ -655,6 +656,7 @@ mh_menu() {
             10) svc_status mihomo;   press_enter ;;
             13) _mh_require_installed && { source "$LIB_DIR/ech.sh"; ech_menu mihomo; press_enter; } ;;
             14) _mh_require_installed && { source "$LIB_DIR/exit_cli.sh"; exit_menu_node mihomo; press_enter; } ;;
+            15) _mh_require_installed && { source "$LIB_DIR/exit_cli.sh"; node_menu_edit mihomo; press_enter; } ;;
             11) mh_logs ;;
             12) _mh_require_installed && { _mh_view_all_nodes; press_enter; } ;;
             0)  return ;;

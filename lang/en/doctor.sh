@@ -52,3 +52,5 @@ MSG[doctor.msg.hop_missing]="Port-hopping rules missing: %s of %s node(s) have t
 MSG[doctor.msg.core_root_old_systemd]="%s runs as root: this systemd is older than 231 and cannot start the core unprivileged"
 MSG[doctor.msg.jq_ok]="jq version %s"
 MSG[doctor.msg.jq_old]="jq %s treats -e on empty input as true; PSM needs 1.7 or newer"
+MSG[doctor.msg.tun_ok]="/dev/net/tun is there (virtualisation: %s): both WARP and the free residential exit can be used"
+MSG[doctor.msg.tun_missing]="No /dev/net/tun (virtualisation: %s): the free residential exit cannot work; ask the host to enable TUN, or use the WARP exit, which does not need it"

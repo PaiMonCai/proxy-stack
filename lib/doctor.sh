@@ -499,6 +499,24 @@ _doctor_fixable_count() {
     printf '%s' "$n"
 }
 
+# Containers (LXC, OpenVZ) usually have no /dev/net/tun unless the host hands
+# one out. WARP does not need it — all three cores speak WireGuard themselves —
+# but the free residential exit dials OpenVPN and cannot work without it. The
+# panel shows this too: psm-agent reports `psm doctor --json` with its status.
+_doctor_check_tun() {
+    local virt="" tun="no"
+    virt=$(systemd-detect-virt 2>/dev/null) || virt=""
+    [[ -n "$virt" ]] || virt="unknown"
+    [[ -c /dev/net/tun ]] && tun="yes"
+    if [[ "$tun" == "yes" ]]; then
+        _doctor_add "system.tun" "system" "ok" "$(t doctor.msg.tun_ok "$virt")" \
+            "$(_doctor_details virtualization "$virt" tun_device "/dev/net/tun" available "yes")"
+    else
+        _doctor_add "system.tun" "system" "warning" "$(t doctor.msg.tun_missing "$virt")" \
+            "$(_doctor_details virtualization "$virt" tun_device "/dev/net/tun" available "no")"
+    fi
+}
+
 _doctor_collect() {
     _doctor_reset
     _doctor_check_system
@@ -509,6 +527,7 @@ _doctor_collect() {
     _doctor_check_disk
     _doctor_check_certificates
     _doctor_check_hop
+    _doctor_check_tun
 }
 
 _doctor_summary() {

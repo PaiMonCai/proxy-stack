@@ -52,3 +52,5 @@ MSG[doctor.msg.hop_missing]="포트 호핑 규칙 누락: %s/%s 개 노드만 �
 MSG[doctor.msg.core_root_old_systemd]="%s 은(는) root 로 실행됩니다: 이 systemd 는 231 보다 오래되어 코어를 비 root 로 시작할 수 없습니다"
 MSG[doctor.msg.jq_ok]="jq 버전 %s"
 MSG[doctor.msg.jq_old]="jq %s 은(는) 빈 입력의 -e 를 참으로 처리합니다. PSM 은 1.7 이상이 필요합니다"
+MSG[doctor.msg.tun_ok]="/dev/net/tun is there (virtualisation: %s): both WARP and the free residential exit can be used"
+MSG[doctor.msg.tun_missing]="No /dev/net/tun (virtualisation: %s): the free residential exit cannot work; ask the host to enable TUN, or use the WARP exit, which does not need it"

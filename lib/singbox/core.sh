@@ -701,7 +701,8 @@ sb_menu() {
             "$(t sb.menu.logs)" \
             "$(t sb.menu.share)" \
             "$(t common.ech.title)" \
-            "$(t exm.menu_item)"
+            "$(t exm.menu_item)" \
+            "$(t nme.menu_item)"
 
         case "$MENU_CHOICE" in
             1)  sb_install;    press_enter ;;
@@ -719,6 +720,7 @@ sb_menu() {
             10) svc_status sing-box;   press_enter ;;
             13) _sb_require_installed && { source "$LIB_DIR/ech.sh"; ech_menu sing-box; press_enter; } ;;
             14) _sb_require_installed && { source "$LIB_DIR/exit_cli.sh"; exit_menu_node sing-box; press_enter; } ;;
+            15) _sb_require_installed && { source "$LIB_DIR/exit_cli.sh"; node_menu_edit sing-box; press_enter; } ;;
             11) sb_logs ;;
             12) _sb_require_installed && { _sb_view_all_nodes; press_enter; } ;;
             0)  return ;;

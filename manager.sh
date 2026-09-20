@@ -130,7 +130,7 @@ case "${1:-}" in
         ;;
     --update)
         source "$PSM_ROOT/update.sh"
-        psm_update
+        psm_update "${2:-}"
         exit $?
         ;;
     --traffic-check)

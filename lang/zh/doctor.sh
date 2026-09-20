@@ -52,3 +52,5 @@ MSG[doctor.msg.hop_missing]="端口跳跃规则缺失：%s/%s 个节点有规则
 MSG[doctor.msg.core_root_old_systemd]="%s 以 root 运行：本机 systemd 低于 231，无法以非 root 用户启动内核"
 MSG[doctor.msg.jq_ok]="jq 版本 %s"
 MSG[doctor.msg.jq_old]="jq %s 对空输入的 -e 判断会误判为真，PSM 需要 1.7 或更新版本"
+MSG[doctor.msg.tun_ok]="/dev/net/tun 可用（虚拟化：%s）：WARP 和免费家宽出口都能用"
+MSG[doctor.msg.tun_missing]="没有 /dev/net/tun（虚拟化：%s）：免费家宽出口用不了，请让服务商开启 TUN，或改用 WARP 出口（WARP 不需要它）"
