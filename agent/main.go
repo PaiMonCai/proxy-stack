@@ -41,7 +41,7 @@ import (
 	"time"
 )
 
-const agentVersion = "0.5.0"
+const agentVersion = "0.6.0"
 
 const (
 	commandTimeout  = 120 * time.Second // one psm command
@@ -308,6 +308,31 @@ func checkNode(t task, withTag bool) string {
 }
 
 // nodeData checks that a task's settings are one JSON object of sane size.
+// checkRelay validates a relay task. A relay carries no core and no protocol,
+// so checkNode does not apply to it: what has to hold is the tag and the hop
+// itself. The panel always sends a relay's whole desired state, for a change
+// as much as for a new one, so both ports and the far host must be there.
+func checkRelay(t task) string {
+	if !tagRe.MatchString(t.Tag) {
+		return "bad tag " + t.Tag
+	}
+	obj, why := nodeData(t)
+	if why != "" {
+		return why
+	}
+	if _, ok := goodPort(obj["listen_port"]); !ok {
+		return "bad listen port"
+	}
+	if _, ok := goodPort(obj["remote_port"]); !ok {
+		return "bad remote port"
+	}
+	host, _ := obj["remote_host"].(string)
+	if host == "" || !hostRe.MatchString(host) {
+		return "bad remote host " + host
+	}
+	return ""
+}
+
 func nodeData(t task) (map[string]any, string) {
 	if len(t.Data) == 0 || len(t.Data) > maxTaskData {
 		return nil, "missing or oversized node settings"
@@ -598,6 +623,36 @@ func (a *agent) execute(ctx context.Context, t task) result {
 			return rejected(t, "not a standalone server: "+t.Protocol)
 		}
 		out, err := a.psmFor(ctx, installTimeout, nil, "standalone", "remove", t.Protocol, "--yes", "--json")
+		if err != nil {
+			return fail(err)
+		}
+		r.OK, r.Output = true, jsonOrNil(out)
+	case "relay.add", "relay.update":
+		if why := checkRelay(t); why != "" {
+			return rejected(t, why)
+		}
+		// realm is fetched on first use, the way a missing core is for a node,
+		// so this gets the install timeout rather than the command one.
+		args := []string{"relay", "add"}
+		if t.Kind == "relay.update" {
+			args = []string{"relay", "update", t.Tag}
+		}
+		out, err := a.psmFor(ctx, installTimeout, t.Data, append(args, "--input", "-", "--json")...)
+		if err != nil {
+			return fail(err)
+		}
+		r.OK, r.Output = true, jsonOrNil(out)
+	case "relay.delete":
+		if !tagRe.MatchString(t.Tag) {
+			return rejected(t, "bad tag "+t.Tag)
+		}
+		out, err := a.psm(ctx, nil, "relay", "delete", t.Tag, "--yes", "--if-exists", "--json")
+		if err != nil {
+			return fail(err)
+		}
+		r.OK, r.Output = true, jsonOrNil(out)
+	case "relay.list":
+		out, err := a.psm(ctx, nil, "relay", "list", "--json")
 		if err != nil {
 			return fail(err)
 		}

@@ -254,11 +254,27 @@ _relay_tls_fields() {   # <remote_host> <sni> <cert> <key> <insecure> → json
 }
 
 # ── add ──────────────────────────────────────────────────────────────────────
+# A whole rule as JSON, the way `psm node add --input -` takes a node: the
+# panel's agent hands one over on stdin rather than building a command line.
+_relay_load_input() {   # <FILE|-|@FILE|JSON>
+    local spec="$1" content
+    case "$spec" in
+        -) content=$(command cat) ;;
+        @*) content=$(command cat "${spec#@}") || return 1 ;;
+        *) if [[ -f "$spec" ]]; then content=$(command cat "$spec") || return 1; else content="$spec"; fi ;;
+    esac
+    printf '%s' "$content" | jq -e 'type == "object"' >/dev/null 2>&1 || {
+        _relay_err 'input must be a JSON object'; return 1; }
+    printf '%s' "$content" | jq -c '.'
+}
+
 _relay_cmd_add() {
-    local tag="" lp="" rh="" rp="" udp=false tls=false sni="" cert="" key="" insecure=false
-    local as_json=0 open_fw=1
+    local tag="" lp="" rh="" rp="" udp="" tls="" sni="" cert="" key="" insecure=""
+    local as_json=0 open_fw=1 input=""
     while (( $# )); do
         case "$1" in
+            --input) [[ $# -ge 2 ]] || { _relay_err '--input requires FILE or -'; return 2; }; input="$2"; shift 2 ;;
+            --data)  [[ $# -ge 2 ]] || { _relay_err '--data requires JSON or @FILE'; return 2; }; input="$2"; shift 2 ;;
             --tag) tag="${2:-}"; shift 2 ;;
             --listen-port) lp="${2:-}"; shift 2 ;;
             --remote-host) rh="${2:-}"; shift 2 ;;
@@ -274,7 +290,24 @@ _relay_cmd_add() {
             *) _relay_err "unknown option: $1"; return 2 ;;
         esac
     done
+    # the JSON first, then the options on top of it, as psm node add does
+    local from='{}'
+    [[ -n "$input" ]] && { from=$(_relay_load_input "$input") || return 2; }
     exec </dev/null
+    local v
+    v=$(printf '%s' "$from" | jq -r '.tag // ""');          [[ -n "$tag" ]] || tag="$v"
+    v=$(printf '%s' "$from" | jq -r '.listen_port // ""');  [[ -n "$lp" ]] || lp="$v"
+    v=$(printf '%s' "$from" | jq -r '.remote_host // ""');  [[ -n "$rh" ]] || rh="$v"
+    v=$(printf '%s' "$from" | jq -r '.remote_port // ""');  [[ -n "$rp" ]] || rp="$v"
+    v=$(printf '%s' "$from" | jq -r '.udp // ""');          [[ -n "$udp" ]] || udp="$v"
+    v=$(printf '%s' "$from" | jq -r '.tls // ""');          [[ -n "$tls" ]] || tls="$v"
+    v=$(printf '%s' "$from" | jq -r '.tls_sni // ""');      [[ -n "$sni" ]] || sni="$v"
+    v=$(printf '%s' "$from" | jq -r '.tls_cert // ""');     [[ -n "$cert" ]] || cert="$v"
+    v=$(printf '%s' "$from" | jq -r '.tls_key // ""');      [[ -n "$key" ]] || key="$v"
+    v=$(printf '%s' "$from" | jq -r '.tls_insecure // ""'); [[ -n "$insecure" ]] || insecure="$v"
+    udp=$(_relay_bool "${udp:-false}") || { _relay_err 'udp must be true or false'; return 2; }
+    tls=$(_relay_bool "${tls:-false}") || { _relay_err 'tls must be true or false'; return 2; }
+    insecure=$(_relay_bool "${insecure:-false}") || { _relay_err 'tls_insecure must be true or false'; return 2; }
     _relay_valid_tag "$tag" || { _relay_err 'a tag is required: letters, digits, . _ - (max 64)'; return 2; }
     _relay_valid_port "$lp" || { _relay_err '--listen-port must be 1-65535'; return 2; }
     _relay_valid_port "$rp" || { _relay_err '--remote-port must be 1-65535'; return 2; }
@@ -341,9 +374,11 @@ _relay_cmd_delete() {
 _relay_cmd_update() {
     local tag="${1:-}"; shift || true
     local lp="" rh="" rp="" udp="" tls="" sni="" cert="" key="" insecure=""
-    local as_json=0 seen=0
+    local as_json=0 seen=0 input=""
     while (( $# )); do
         case "$1" in
+            --input) [[ $# -ge 2 ]] || { _relay_err '--input requires FILE or -'; return 2; }; input="$2"; shift 2 ;;
+            --data)  [[ $# -ge 2 ]] || { _relay_err '--data requires JSON or @FILE'; return 2; }; input="$2"; shift 2 ;;
             --listen-port) lp="${2:-}"; seen=1; shift 2 ;;
             --remote-host) rh="${2:-}"; seen=1; shift 2 ;;
             --remote-port) rp="${2:-}"; seen=1; shift 2 ;;
@@ -357,6 +392,39 @@ _relay_cmd_update() {
             *) _relay_err "unknown option: $1"; return 2 ;;
         esac
     done
+
+    # A JSON body (how the agent sends a change) fills in whatever no flag set.
+    # Unlike add, an empty string here means "leave this field alone", so a
+    # boolean is normalised only when it was actually given.
+    local from='{}' v
+    if [[ -n "$input" ]]; then
+        from=$(_relay_load_input "$input") || return 2
+        v=$(printf '%s' "$from" | jq -r '.tag // ""')
+        if [[ -n "$v" && -n "$tag" && "$v" != "$tag" ]]; then
+            _relay_err "input renames $tag to $v; a relay cannot be renamed, delete and add instead"
+            return 2
+        fi
+        [[ -n "$tag" || "$tag" == --* ]] || tag="$v"
+        v=$(printf '%s' "$from" | jq -r '.listen_port // ""');  [[ -n "$lp" ]] || lp="$v"
+        v=$(printf '%s' "$from" | jq -r '.remote_host // ""');  [[ -n "$rh" ]] || rh="$v"
+        v=$(printf '%s' "$from" | jq -r '.remote_port // ""');  [[ -n "$rp" ]] || rp="$v"
+        # jq's "//" stands in for false as well as for null, so a boolean has to
+        # be read by asking whether its key is there at all: without this a
+        # {"udp": false} could never turn UDP off again, only on.
+        v=$(printf '%s' "$from" | jq -r 'if has("udp") then (.udp|tostring) else "" end');  [[ -n "$udp" ]] || udp="$v"
+        v=$(printf '%s' "$from" | jq -r 'if has("tls") then (.tls|tostring) else "" end');  [[ -n "$tls" ]] || tls="$v"
+        v=$(printf '%s' "$from" | jq -r '.tls_sni // ""');      [[ -n "$sni" ]] || sni="$v"
+        v=$(printf '%s' "$from" | jq -r '.tls_cert // ""');     [[ -n "$cert" ]] || cert="$v"
+        v=$(printf '%s' "$from" | jq -r '.tls_key // ""');      [[ -n "$key" ]] || key="$v"
+        v=$(printf '%s' "$from" | jq -r 'if has("tls_insecure") then (.tls_insecure|tostring) else "" end'); [[ -n "$insecure" ]] || insecure="$v"
+        [[ -n "$udp" ]]      && { udp=$(_relay_bool "$udp")           || { _relay_err 'udp must be true or false'; return 2; }; }
+        [[ -n "$tls" ]]      && { tls=$(_relay_bool "$tls")           || { _relay_err 'tls must be true or false'; return 2; }; }
+        [[ -n "$insecure" ]] && { insecure=$(_relay_bool "$insecure") || { _relay_err 'tls_insecure must be true or false'; return 2; }; }
+        for v in "$lp" "$rh" "$rp" "$udp" "$tls" "$sni" "$cert" "$key" "$insecure"; do
+            [[ -n "$v" ]] && { seen=1; break; }
+        done
+    fi
+
     [[ -n "$tag" && "$tag" != --* ]] || { _relay_err 'update requires TAG'; return 2; }
     (( seen )) || { _relay_err 'update needs at least one field to change'; return 2; }
     [[ $EUID -eq 0 ]] || { _relay_err 'must run as root'; return 1; }
@@ -405,10 +473,10 @@ _relay_cmd_update() {
         _relay_result unchanged "$old" "$as_json"; return 0
     fi
 
-    local old_port old_udp old_proto
+    # only the port is needed: _relay_fw_close closes whichever of tcp/udp this
+    # relay had actually written into the ledger, and leaves the rest alone
+    local old_port
     old_port=$(printf '%s' "$old" | jq -r '.listen_port')
-    old_udp=$(printf '%s' "$old" | jq -r '.udp')
-    [[ "$old_udp" == "true" ]] && old_proto=both || old_proto=tcp
 
     _relay_apply_rule "$new" "$as_json" updated 1 || return 1
     # the old port closes only once the new rule is live, and only if this
