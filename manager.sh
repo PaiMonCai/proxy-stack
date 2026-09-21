@@ -72,6 +72,12 @@ case "${1:-}" in
         psm_exit_cli "$@"
         exit $?
         ;;
+    relay)
+        shift
+        source "$LIB_DIR/relay_cli.sh"
+        psm_relay_cli "$@"
+        exit $?
+        ;;
     version|--version)
         psm_version
         exit 0
@@ -93,6 +99,9 @@ Usage:
   psm sni find [...]          REALITY camouflage targets in this server's network (mapping engine + TLS check)
   psm exit status|warp|vpngate [...]
                               The WARP and free residential exits (a node uses one with --exit)
+  psm relay list|show|add|update|delete|install [...]
+                              Relays (realm): forward a port to another server, the hop
+                              optionally wrapped in TLS (--tls)
   psm version                 The PSM version (date and commit)
   psm migrate export|import|push [...]
                               Move this server to another host (psm migrate --help)

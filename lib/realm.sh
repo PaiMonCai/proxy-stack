@@ -77,6 +77,25 @@ _realm_gen_toml() {
             echo "[[endpoints]]"
             echo "listen = \"0.0.0.0:${listen}\""
             echo "remote = \"${remote}\""
+            # The hop's own encryption (psm relay --tls). realm wraps the
+            # forwarded stream in TLS: the side that forwards to this machine
+            # terminates it (it holds the certificate), any other side dials it.
+            # Rules written by the menu have no tls field and are unaffected.
+            local tls tls_sni tls_cert tls_key tls_insecure
+            tls=$(echo "$rule" | jq -r '.tls // false')
+            if [[ "$tls" == "true" ]]; then
+                tls_sni=$(echo "$rule"      | jq -r '.tls_sni // ""')
+                tls_cert=$(echo "$rule"     | jq -r '.tls_cert // ""')
+                tls_key=$(echo "$rule"      | jq -r '.tls_key // ""')
+                tls_insecure=$(echo "$rule" | jq -r '.tls_insecure // false')
+                if [[ -n "$tls_cert" && -n "$tls_key" ]]; then
+                    echo "listen_transport = \"tls;servername=${tls_sni};cert=${tls_cert};key=${tls_key}\""
+                else
+                    local opts="tls;sni=${tls_sni}"
+                    [[ "$tls_insecure" == "true" ]] && opts="${opts};insecure"
+                    echo "remote_transport = \"${opts}\""
+                fi
+            fi
             if [[ "$udp" == "true" ]]; then
                 echo "[endpoints.network]"
                 echo "use_udp = true"
@@ -163,6 +182,43 @@ realm_install() {
     else
         _realm_apply
     fi
+}
+
+# realm itself, without questions: `psm relay` and the panel's agent install it
+# before the first rule. realm_install asks before reinstalling and offers to
+# add a rule; this only fetches what is missing and writes the service.
+realm_install_unattended() {
+    [[ -x "$REALM_BIN" ]] && return 0
+    ensure_pkg_deps curl tar jq >/dev/null 2>&1 || true
+    require_cmd curl tar jq || return 1
+
+    local arch realm_arch
+    arch=$(get_arch)
+    case "$arch" in
+        amd64) realm_arch="x86_64-unknown-linux-musl" ;;
+        arm64) realm_arch="aarch64-unknown-linux-musl" ;;
+        arm32) realm_arch="armv7-unknown-linux-musleabihf" ;;
+        *) log_error "$(t realm.unsupported_arch "$arch")"; return 1 ;;
+    esac
+
+    local tag; tag=$(gh_latest_tag zhboner/realm)
+    [[ "$tag" =~ ^v[0-9] ]] || tag="$REALM_FALLBACK_TAG"
+
+    local file="realm-${realm_arch}.tar.gz"
+    local url="${REALM_RELEASES}/download/${tag}/${file}"
+    local tmp_dir; tmp_dir=$(mktemp -d) || return 1
+    if ! curl "${PSM_DL[@]}" -fsSL -o "$tmp_dir/$file" "$url"; then
+        rm -rf "$tmp_dir"; log_error "$(t realm.download_fail "$url")"; return 1
+    fi
+    tar -xzf "$tmp_dir/$file" -C "$tmp_dir" || { rm -rf "$tmp_dir"; log_error "$(t realm.extract_fail "$file")"; return 1; }
+    [[ -f "$tmp_dir/realm" ]] || { rm -rf "$tmp_dir"; log_error "$(t realm.binary_missing)"; return 1; }
+    install -m 755 "$tmp_dir/realm" "$REALM_BIN"
+    rm -rf "$tmp_dir"
+
+    mkdir -p "$REALM_CFG_DIR"
+    _realm_write_service
+    svc_daemon_reload
+    log_ok "$(t realm.install_done "$tag")"
 }
 
 _realm_write_service() {
