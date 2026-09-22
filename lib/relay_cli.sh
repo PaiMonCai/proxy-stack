@@ -230,23 +230,20 @@ _RELAY_PROBE_SAMPLES=5
 _RELAY_PROBE_TIMEOUT=3
 
 # One TCP connect, in milliseconds; nothing at all when it did not connect.
-# curl measures the connect itself (and honours a connect timeout), so it is
-# used when it speaks telnet://; bash's own /dev/tcp is the fallback, wrapped
-# in `timeout` because a filtered port would otherwise hang for minutes.
+#
+# bash opens the connection itself (/dev/tcp) and the shell exits as soon as it
+# is up, so the measurement costs about as long as the handshake. curl is not
+# used for this: with telnet:// it connects at once but then sits there until
+# --max-time expires, which cost three seconds per sample — half a minute for
+# every measurement of a couple of relays, and it pushed the readings apart.
+#
+# `timeout` bounds a port that silently drops packets, which would otherwise
+# hang for minutes. Spawning that subshell costs a few milliseconds, so this
+# cannot resolve below roughly 5 ms: plenty for a hop between two machines,
+# and the floor to keep in mind for one to 127.0.0.1.
 _relay_connect_ms() {   # <host> <port>
-    local host="$1" port="$2" t s e
+    local host="$1" port="$2" s e
     local LC_ALL=C
-    if [[ "${_RELAY_CURL_TELNET:-}" == "" ]]; then
-        curl --version 2>/dev/null | grep -qw telnet && _RELAY_CURL_TELNET=1 || _RELAY_CURL_TELNET=0
-    fi
-    if [[ "$_RELAY_CURL_TELNET" == 1 ]]; then
-        t=$(curl -sS -o /dev/null --connect-timeout "$_RELAY_PROBE_TIMEOUT" \
-                 --max-time "$_RELAY_PROBE_TIMEOUT" -w '%{time_connect}' \
-                 "telnet://${host}:${port}" </dev/null 2>/dev/null)
-        case "$t" in ''|0|0.000000) return 1 ;; esac
-        awk -v t="$t" 'BEGIN { printf "%.2f\n", t * 1000 }'
-        return 0
-    fi
     s="$EPOCHREALTIME"
     timeout "$_RELAY_PROBE_TIMEOUT" bash -c "exec 3<>/dev/tcp/${host}/${port}" 2>/dev/null || return 1
     e="$EPOCHREALTIME"

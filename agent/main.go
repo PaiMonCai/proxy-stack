@@ -41,7 +41,7 @@ import (
 	"time"
 )
 
-const agentVersion = "0.7.0"
+const agentVersion = "0.8.0"
 
 const (
 	commandTimeout  = 120 * time.Second // one psm command
@@ -218,6 +218,7 @@ type task struct {
 	Tag        string          `json:"tag,omitempty"`      // the node's tag (its name in the panel)
 	Data       json.RawMessage `json:"data,omitempty"`     // node settings
 	Server     string          `json:"server,omitempty"`   // the address in exported links
+	Mount443   bool            `json:"mount443,omitempty"` // share the public 443 by SNI (psm node add --mount-443)
 	Format     string          `json:"format,omitempty"`   // uri | surge
 	LimitBytes int64           `json:"limit_bytes,omitempty"`
 	ResetDay   int             `json:"reset_day,omitempty"`
@@ -258,6 +259,7 @@ type agent struct {
 	pending     []result  // results not yet delivered to the panel
 	lastTraffic time.Time // when the traffic counters last went to the panel
 	lastRelay   time.Time // when the relays were last measured for the panel
+	hasRelays   bool      // the last measurement found at least one relay
 	psmVersion  string
 	versionAt   time.Time
 	leaving     bool // agent.leave ran: uninstall once its result is delivered
@@ -530,8 +532,14 @@ func (a *agent) execute(ctx context.Context, t task) result {
 		if _, err := a.psmFor(ctx, installTimeout, nil, "core", "install", t.Core, "--if-missing", "--json"); err != nil {
 			return fail(fmt.Errorf("installing %s: %w", t.Core, err))
 		}
+		// Sharing the public 443 is not a node setting but how the node is made:
+		// PSM puts it on 127.0.0.1 and routes 443 to it by SNI.
+		args := []string{"node", "add", t.Core, t.Protocol, "--input", "-", "--json"}
+		if t.Mount443 {
+			args = append(args, "--mount-443")
+		}
 		// the long timeout: a node whose exit is the residential tunnel connects it first
-		out, err := a.psmFor(ctx, installTimeout, t.Data, "node", "add", t.Core, t.Protocol, "--input", "-", "--json")
+		out, err := a.psmFor(ctx, installTimeout, t.Data, args...)
 		if err != nil {
 			return fail(err)
 		}
@@ -788,6 +796,10 @@ func (a *agent) step(ctx context.Context) (time.Duration, error) {
 	if relayDue {
 		if rl := a.jsonPart(ctx, "relay", "probe", "--json"); string(rl) != "null" {
 			req["relays"] = rl
+			var probed struct {
+				Count int `json:"count"`
+			}
+			a.hasRelays = json.Unmarshal(rl, &probed) == nil && probed.Count > 0
 		}
 	}
 	delivering := a.leaving // this sync carries agent.leave's result
@@ -822,6 +834,15 @@ func (a *agent) step(ctx context.Context) (time.Duration, error) {
 	interval := time.Duration(resp.Interval) * time.Second
 	if interval < 3*time.Second || interval > 5*time.Minute {
 		interval = defaultInterval
+	}
+	// A measurement rides the next sync, so a longer idle interval spaces the
+	// readings out by that much on top of relayEvery: with the default 30
+	// seconds they arrived every 90 rather than every 60. On a server that has
+	// relays, come back when the next measurement is due instead.
+	if a.hasRelays {
+		if due := relayEvery - time.Since(a.lastRelay); due < interval {
+			interval = max(due, 3*time.Second)
+		}
 	}
 	return interval, nil
 }

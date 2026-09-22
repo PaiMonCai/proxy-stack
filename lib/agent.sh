@@ -14,7 +14,7 @@
 # shellcheck source=/dev/null
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
-PSM_AGENT_VERSION="0.7.0"
+PSM_AGENT_VERSION="0.8.0"
 PSM_AGENT_BIN="/usr/local/bin/psm-agent"
 PSM_AGENT_CFG="/etc/psm/agent.json"
 PSM_AGENT_SERVICE="psm-agent"
