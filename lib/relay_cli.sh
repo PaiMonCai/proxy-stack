@@ -33,6 +33,7 @@ Usage:
                 [--udp true|false] [--tls true|false] [--tls-sni NAME]
                 [--tls-cert FILE] [--tls-key FILE] [--tls-insecure true|false] [--json]
   psm relay delete TAG --yes [--if-exists] [--json]
+  psm relay probe [TAG] [--samples N] [--json]
   psm relay install [--json]
 
 Only the entry machine needs a rule; the landing machine's nodes stay as they
@@ -107,6 +108,20 @@ _relay_apply_rule() {   # <rule json> <as_json> <status> <open_firewall>
     local tag prev port proto udp
     tag=$(printf '%s' "$rule" | jq -r '.tag')
     prev=$(_realm_load)
+    port=$(printf '%s' "$rule" | jq -r '.listen_port')
+    udp=$(printf '%s' "$rule" | jq -r '.udp')
+    [[ "$udp" == "true" ]] && proto=both || proto=tcp
+
+    # Something else already holding the port is the common way for a rule to
+    # be dead on arrival, and realm will not say so loudly enough (see below).
+    # A rule that already listens there is realm's own: on a change that keeps
+    # the port, realm is the listener, so only a port no rule used counts.
+    if ! printf '%s' "$prev" | jq -e --argjson p "$port" 'any(.[]; .listen_port == $p)' >/dev/null 2>&1 \
+       && _relay_port_bound "$port" tcp; then
+        _relay_err "port $port is already in use on this machine; nothing changed"
+        return 1
+    fi
+
     _realm_upsert "$rule"
     if ! _realm_apply >&2; then
         _realm_save "$prev"
@@ -114,13 +129,55 @@ _relay_apply_rule() {   # <rule json> <as_json> <status> <open_firewall>
         _relay_err "realm did not accept the rule for $tag; nothing changed"
         return 1
     fi
+    # The service being active is not enough (see _relay_port_bound): the port
+    # has to be listening, or this rule is dead while everything reports well.
+    local try
+    for try in 1 2 3; do
+        _relay_port_bound "$port" "$proto" && break
+        [[ "$try" == 3 ]] || sleep 1
+    done
+    if ! _relay_port_bound "$port" "$proto"; then
+        _realm_save "$prev"
+        _realm_apply >/dev/null 2>&1 || true
+        _relay_err "realm is running but is not listening on $port (is the port already in use?); nothing changed"
+        return 1
+    fi
+
     if [[ "$open_fw" == "1" ]]; then
-        port=$(printf '%s' "$rule" | jq -r '.listen_port')
-        udp=$(printf '%s' "$rule" | jq -r '.udp')
-        [[ "$udp" == "true" ]] && proto=both || proto=tcp
         _relay_fw_open "$port" "$proto"
     fi
+    # metering, so the panel can show what the hop carries
+    _relay_meter_ensure "$tag" "$port"
     _relay_result "$status" "$rule" "$as_json"
+}
+
+# ── did the rule really take? ────────────────────────────────────────────────
+# realm keeps running when a single endpoint cannot bind: it logs
+# "[tcp]failed to bind 0.0.0.0:PORT: Address in use (os error 98)" and goes on
+# serving the others. So a restart that leaves the service active is no proof
+# that this rule took, and a relay that can never accept a connection would be
+# reported as applied. The listening sockets are read straight from /proc, so
+# this needs neither ss nor netstat and behaves the same on Debian, Alpine and
+# Red Hat.
+#
+# It answers "is anything listening there", not "is realm listening there": the
+# process squatting the port would otherwise make the check pass. That is why
+# the port is also checked for a squatter before the rule is applied.
+_relay_port_bound() {   # <port> <tcp|udp|both>
+    local port="$1" want="$2" hex p ok=1
+    hex=$(printf '%04X' "$port")
+    for p in tcp udp; do
+        [[ "$want" == both || "$want" == "$p" ]] || continue
+        if [[ "$p" == tcp ]]; then
+            # 0A is TCP_LISTEN; a connected socket on the same port is not a listener
+            awk -v p=":${hex}\$" '$4 == "0A" && toupper($2) ~ p { f = 1 } END { exit !f }' \
+                /proc/net/tcp /proc/net/tcp6 2>/dev/null || ok=0
+        else
+            awk -v p=":${hex}\$" 'toupper($2) ~ p { f = 1 } END { exit !f }' \
+                /proc/net/udp /proc/net/udp6 2>/dev/null || ok=0
+        fi
+    done
+    [[ "$ok" == 1 ]]
 }
 
 # ── the firewall, the way nodes do it ────────────────────────────────────────
@@ -159,6 +216,150 @@ _relay_fw_close() {   # <port>: only what this opened, and only if no rule still
         sed -i "\|^$port/$p\$|d" "$_RELAY_FW_LEDGER"
     done
     return 0
+}
+
+# ── how the hop is doing ─────────────────────────────────────────────────────
+# Round trip, jitter and loss are measured with plain TCP connects to the
+# landing side, not with ping: ICMP is filtered often enough on these networks
+# that ping would report loss that is not there, and a relay carries TCP
+# anyway, so a connect is what the traffic actually experiences.
+#
+# Jitter here is the mean absolute difference between consecutive round trips
+# over the burst — the same quantity RFC 3550 keeps a running estimate of.
+_RELAY_PROBE_SAMPLES=5
+_RELAY_PROBE_TIMEOUT=3
+
+# One TCP connect, in milliseconds; nothing at all when it did not connect.
+# curl measures the connect itself (and honours a connect timeout), so it is
+# used when it speaks telnet://; bash's own /dev/tcp is the fallback, wrapped
+# in `timeout` because a filtered port would otherwise hang for minutes.
+_relay_connect_ms() {   # <host> <port>
+    local host="$1" port="$2" t s e
+    local LC_ALL=C
+    if [[ "${_RELAY_CURL_TELNET:-}" == "" ]]; then
+        curl --version 2>/dev/null | grep -qw telnet && _RELAY_CURL_TELNET=1 || _RELAY_CURL_TELNET=0
+    fi
+    if [[ "$_RELAY_CURL_TELNET" == 1 ]]; then
+        t=$(curl -sS -o /dev/null --connect-timeout "$_RELAY_PROBE_TIMEOUT" \
+                 --max-time "$_RELAY_PROBE_TIMEOUT" -w '%{time_connect}' \
+                 "telnet://${host}:${port}" </dev/null 2>/dev/null)
+        case "$t" in ''|0|0.000000) return 1 ;; esac
+        awk -v t="$t" 'BEGIN { printf "%.2f\n", t * 1000 }'
+        return 0
+    fi
+    s="$EPOCHREALTIME"
+    timeout "$_RELAY_PROBE_TIMEOUT" bash -c "exec 3<>/dev/tcp/${host}/${port}" 2>/dev/null || return 1
+    e="$EPOCHREALTIME"
+    awk -v s="$s" -v e="$e" 'BEGIN { printf "%.2f\n", (e - s) * 1000 }'
+}
+
+# ── metering, on the same chain the nodes use ────────────────────────────────
+# A relay is metered by its listening port through PSM_TRF, exactly as a
+# standalone node is. The tag is prefixed so it can never collide with a node's
+# own tag in that chain.
+_relay_meter_tag() { printf 'relay-%s' "$1"; }
+
+_relay_meter_load() {
+    declare -f _trf_ipt_ensure_rules &>/dev/null && return 0
+    source "$LIB_DIR/traffic.sh" 2>/dev/null || return 1
+}
+
+_relay_meter_ensure() {   # <tag> <listen port>
+    _relay_meter_load || return 0
+    _trf_ipt_ensure_rules "$(_relay_meter_tag "$1")" "$2" >/dev/null 2>&1 || true
+}
+
+_relay_meter_remove() {   # <tag> <listen port>
+    _relay_meter_load || return 0
+    _trf_ipt_remove_rules "$(_relay_meter_tag "$1")" "$2" >/dev/null 2>&1 || true
+}
+
+# Bytes counted for this relay since the rules were put in place (cumulative:
+# the panel turns consecutive readings into the traffic of an interval).
+_relay_meter_bytes() {   # <tag>
+    _relay_meter_load || { echo 0; return 0; }
+    _trf_ipt_query_bytes "$(_relay_meter_tag "$1")" 2>/dev/null || echo 0
+}
+
+# One rule's measurement, as a JSON object.
+_relay_probe_one() {   # <rule json> <samples>
+    local rule="$1" n="$2" tag host port i ms
+    tag=$(printf '%s' "$rule" | jq -r '.tag')
+    host=$(printf '%s' "$rule" | jq -r '.remote_host')
+    port=$(printf '%s' "$rule" | jq -r '.remote_port')
+
+    local -a rtts=()
+    local sent=0 lost=0
+    for ((i = 0; i < n; i++)); do
+        sent=$((sent + 1))
+        if ms=$(_relay_connect_ms "$host" "$port"); then
+            rtts+=("$ms")
+        else
+            lost=$((lost + 1))
+        fi
+    done
+
+    local rtt_avg=null rtt_min=null rtt_max=null jitter=null
+    if (( ${#rtts[@]} > 0 )); then
+        rtt_avg=$(printf '%s\n' "${rtts[@]}" | awk '{ s += $1 } END { printf "%.2f", s / NR }')
+        rtt_min=$(printf '%s\n' "${rtts[@]}" | awk 'NR == 1 || $1 < m { m = $1 } END { printf "%.2f", m }')
+        rtt_max=$(printf '%s\n' "${rtts[@]}" | awk '$1 > m { m = $1 } END { printf "%.2f", m }')
+        if (( ${#rtts[@]} > 1 )); then
+            jitter=$(printf '%s\n' "${rtts[@]}" | awk '
+                NR > 1 { d = $1 - p; if (d < 0) d = -d; s += d; c++ }
+                { p = $1 }
+                END { printf "%.2f", (c ? s / c : 0) }')
+        else
+            jitter=0
+        fi
+    fi
+    local loss; loss=$(awk -v l="$lost" -v s="$sent" 'BEGIN { printf "%.1f", s ? l * 100 / s : 0 }')
+
+    jq -nc --arg tag "$tag" --arg host "$host" --argjson port "$port" \
+        --argjson rtt "$rtt_avg" --argjson min "$rtt_min" --argjson max "$rtt_max" \
+        --argjson jitter "$jitter" --argjson loss "$loss" \
+        --argjson sent "$sent" --argjson bytes "$(_relay_meter_bytes "$tag")" \
+        --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
+        { tag: $tag, remote_host: $host, remote_port: $port,
+          rtt_ms: $rtt, rtt_min_ms: $min, rtt_max_ms: $max, jitter_ms: $jitter,
+          loss_pct: $loss, samples: $sent, bytes: $bytes, at: $at }'
+}
+
+_relay_cmd_probe() {
+    local as_json=0 one="" n="$_RELAY_PROBE_SAMPLES"
+    while (( $# )); do
+        case "$1" in
+            --json) as_json=1; shift ;;
+            --samples)
+                [[ $# -ge 2 ]] || { _relay_err '--samples requires a number'; return 2; }
+                n="$2"
+                [[ "$n" =~ ^[0-9]+$ ]] && (( n >= 1 && n <= 20 )) || { _relay_err '--samples must be 1-20'; return 2; }
+                shift 2 ;;
+            -*) _relay_err "unknown option: $1"; return 2 ;;
+            *) one="$1"; shift ;;
+        esac
+    done
+    _relay_load_realm
+    local rules; rules=$(_realm_load)
+    [[ -n "$one" ]] && rules=$(printf '%s' "$rules" | jq -c --arg t "$one" '[.[] | select(.tag == $t)]')
+    if [[ -n "$one" ]] && [[ "$(printf '%s' "$rules" | jq 'length')" == 0 ]]; then
+        _relay_err "no such relay: $one"; return 1
+    fi
+
+    local items="[]" rule item
+    while IFS= read -r rule; do
+        [[ -n "$rule" ]] || continue
+        item=$(_relay_probe_one "$rule" "$n") || continue
+        items=$(jq -c --argjson i "$item" '. + [$i]' <<<"$items")
+    done < <(printf '%s' "$rules" | jq -c '.[]')
+
+    if (( as_json )); then
+        jq -nc --argjson v "$_RELAY_CLI_VERSION" --argjson items "$items" \
+            '{api_version: $v, count: ($items | length), items: $items}'
+    else
+        printf '%s' "$items" | jq -r '.[] |
+            "\(.tag)\t\(.remote_host):\(.remote_port)\t\(if .rtt_ms == null then "unreachable" else "\(.rtt_ms) ms" end)\tjitter \(.jitter_ms // 0) ms\tloss \(.loss_pct)%\t\(.bytes) bytes"'
+    fi
 }
 
 # ── list / show ──────────────────────────────────────────────────────────────
@@ -367,6 +568,7 @@ _relay_cmd_delete() {
     _realm_apply >&2 || { _relay_err "realm did not reload after removing $tag"; return 1; }
     # after the rule has left the store, so _relay_fw_close sees the port free
     _relay_fw_close "$port"
+    _relay_meter_remove "$tag" "$port"
     _relay_result deleted "$rule" "$as_json"
 }
 
@@ -483,6 +685,9 @@ _relay_cmd_update() {
     # opened it and no other rule still listens there
     if [[ -n "$lp" && "$lp" != "$old_port" ]]; then
         _relay_fw_close "$old_port"
+        # the old port's accounting rules would otherwise keep counting for a
+        # port this relay no longer listens on
+        _relay_meter_remove "$tag" "$old_port"
     fi
 }
 
@@ -525,6 +730,7 @@ psm_relay_cli() {
         add)     _relay_cmd_add "$@" ;;
         update)  _relay_cmd_update "$@" ;;
         delete)  _relay_cmd_delete "$@" ;;
+        probe)   _relay_cmd_probe "$@" ;;
         install) _relay_cmd_install "$@" ;;
         help|--help|-h|"") _relay_usage ;;
         *) _relay_err "unknown command: $cmd"; _relay_usage >&2; return 2 ;;

@@ -41,7 +41,7 @@ import (
 	"time"
 )
 
-const agentVersion = "0.6.0"
+const agentVersion = "0.7.0"
 
 const (
 	commandTimeout  = 120 * time.Second // one psm command
@@ -53,6 +53,7 @@ const (
 	maxReport       = 512 << 10         // a status report sent to the panel
 	defaultInterval = 30 * time.Second  // the panel says how long to wait; this is the fallback
 	trafficEvery    = 10 * time.Minute  // how often the traffic counters go to the panel
+	relayEvery      = 60 * time.Second  // how often a relay's hop is measured for the panel
 	versionEvery    = time.Hour         // how often PSM's version is looked up again
 	maxLimitBytes   = 1 << 53           // a traffic limit (8 PiB)
 	defaultConfig   = "/etc/psm/agent.json"
@@ -256,6 +257,7 @@ type agent struct {
 	hostname    string
 	pending     []result  // results not yet delivered to the panel
 	lastTraffic time.Time // when the traffic counters last went to the panel
+	lastRelay   time.Time // when the relays were last measured for the panel
 	psmVersion  string
 	versionAt   time.Time
 	leaving     bool // agent.leave ran: uninstall once its result is delivered
@@ -779,6 +781,15 @@ func (a *agent) step(ctx context.Context) (time.Duration, error) {
 			req["traffic"] = tr
 		}
 	}
+	// A relay's hop is measured far more often than the traffic counters: it is
+	// what the panel's charts draw, and it is cheap (a few TCP connects). A
+	// server with no relay prints an empty list, which costs nothing to send.
+	relayDue := time.Since(a.lastRelay) >= relayEvery
+	if relayDue {
+		if rl := a.jsonPart(ctx, "relay", "probe", "--json"); string(rl) != "null" {
+			req["relays"] = rl
+		}
+	}
 	delivering := a.leaving // this sync carries agent.leave's result
 	if err := post(ctx, a.cfg.Panel, "/api/agent/sync", a.cfg.Token, req, &resp); err != nil {
 		return 0, err
@@ -786,6 +797,9 @@ func (a *agent) step(ctx context.Context) (time.Duration, error) {
 	a.pending = nil
 	if trafficDue {
 		a.lastTraffic = time.Now()
+	}
+	if relayDue {
+		a.lastRelay = time.Now()
 	}
 	if delivering {
 		// the panel has the result: uninstall psm-agent (which stops this process)
