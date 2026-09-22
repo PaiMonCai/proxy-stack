@@ -90,12 +90,13 @@ func (p *fakePanel) handler(t *testing.T) http.Handler {
 	})
 }
 
-// newTestAgent: the traffic report and the version lookup are not due, so the
-// psm calls a test sees are those of its tasks.
+// newTestAgent: the traffic report, the relay measurement and the version
+// lookup are not due, so the psm calls a test sees are those of its tasks.
 func newTestAgent(t *testing.T, p *fakePanel, f *fakeRunner) (*agent, func()) {
 	srv := httptest.NewServer(p.handler(t))
 	return &agent{cfg: &config{Panel: srv.URL, Token: agentToken, AllowHTTP: true}, run: f.run, hostname: "hk1",
-		lastTraffic: time.Now(), versionAt: time.Now(), psmVersion: "2026-09-15 abc1234"}, srv.Close
+		lastTraffic: time.Now(), lastRelay: time.Now(), versionAt: time.Now(),
+		psmVersion: "2026-09-15 abc1234"}, srv.Close
 }
 
 func results(t *testing.T, raw json.RawMessage) []result {
@@ -105,6 +106,50 @@ func results(t *testing.T, raw json.RawMessage) []result {
 		t.Fatalf("results: %v (%s)", err, raw)
 	}
 	return rs
+}
+
+// What the panel's relay charts are drawn from: every relayEvery the agent
+// measures each relay and the reading travels with the next sync — and then
+// not again until it is due, which is what keeps the measurement out of the
+// psm calls the other tests assert on.
+func TestRelaysAreMeasuredForThePanel(t *testing.T) {
+	p := &fakePanel{}
+	f := &fakeRunner{stdout: map[string]string{
+		"probe": `{"api_version":1,"count":1,"items":[{"tag":"r1","rtt_ms":12.5,"jitter_ms":0.5,"loss_pct":0,"bytes":42}]}`,
+	}}
+	a, done := newTestAgent(t, p, f)
+	defer done()
+	a.lastRelay = time.Time{} // due, as it is when psm-agent has just started
+
+	if _, err := a.step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	probe := []string{"relay", "probe", "--json"}
+	measured := false
+	for _, c := range f.calls {
+		if reflect.DeepEqual(c.args, probe) {
+			measured = true
+		}
+	}
+	if !measured {
+		t.Fatalf("the relays were not measured: %q", f.calls)
+	}
+	if len(p.requests) == 0 || len(p.requests[0]["relays"]) == 0 {
+		t.Fatalf("the sync carried no relays: %v", p.requests)
+	}
+	if a.lastRelay.IsZero() {
+		t.Fatal("the next sync would measure all over again")
+	}
+
+	f.calls = nil
+	if _, err := a.step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range f.calls {
+		if reflect.DeepEqual(c.args, probe) {
+			t.Fatalf("measured again before it was due: %q", f.calls)
+		}
+	}
 }
 
 func TestJoinWritesConfig(t *testing.T) {
