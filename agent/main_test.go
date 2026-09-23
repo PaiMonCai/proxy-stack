@@ -343,7 +343,7 @@ func TestTrafficIsReportedWhenDue(t *testing.T) {
 
 func TestLeaveRemovesTheNodesThenTheAgent(t *testing.T) {
 	p := &fakePanel{tasks: []task{{ID: 5, Kind: "agent.leave", Data: json.RawMessage(
-		`{"nodes":[{"core":"xray","protocol":"reality","tag":"a"},{"core":"sing-box","protocol":"ss2022","tag":"b"}],"standalone":["snell"]}`)}}}
+		`{"nodes":[{"core":"xray","protocol":"reality","tag":"a"},{"core":"sing-box","protocol":"ss2022","tag":"b"}],"standalone":["snell"],"relays":["r1"]}`)}}}
 	f := &fakeRunner{stdout: map[string]string{"delete": `{"status":"deleted"}`, "remove": `{"status":"removed"}`}}
 	a, done := newTestAgent(t, p, f)
 	defer done()
@@ -357,6 +357,9 @@ func TestLeaveRemovesTheNodesThenTheAgent(t *testing.T) {
 		{"node", "delete", "xray", "reality", "a", "--yes", "--if-exists", "--json"},
 		{"node", "delete", "sing-box", "ss2022", "b", "--yes", "--if-exists", "--json"},
 		{"standalone", "remove", "snell", "--yes", "--json"},
+		// the relays go too, or realm keeps forwarding on a machine the panel
+		// has forgotten, with its accounting rules still in place
+		{"relay", "delete", "r1", "--yes", "--if-exists", "--json"},
 	}
 	var got [][]string
 	for _, c := range f.calls {
@@ -372,7 +375,7 @@ func TestLeaveRemovesTheNodesThenTheAgent(t *testing.T) {
 		t.Fatal(err)
 	}
 	rs := results(t, p.requests[1]["results"])
-	if len(rs) != 1 || !rs[0].OK || string(rs[0].Output) != `{"failed":[],"removed":["a","b","snell"]}` {
+	if len(rs) != 1 || !rs[0].OK || string(rs[0].Output) != `{"failed":[],"removed":["a","b","snell","r1"]}` {
 		t.Fatalf("leave result: %+v", rs)
 	}
 	if !a.left || !reflect.DeepEqual(spawned, [][]string{{"agent", "remove", "--yes"}}) {

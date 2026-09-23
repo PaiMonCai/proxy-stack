@@ -41,7 +41,7 @@ import (
 	"time"
 )
 
-const agentVersion = "0.8.0"
+const agentVersion = "0.9.0"
 
 const (
 	commandTimeout  = 120 * time.Second // one psm command
@@ -292,6 +292,9 @@ type leavePlan struct {
 		Tag      string `json:"tag"`
 	} `json:"nodes"`
 	Standalone []string `json:"standalone"`
+	// the relays this server carries; an agent too old to know the field just
+	// ignores it and leaves the realm rules behind, as it did before
+	Relays []string `json:"relays"`
 }
 
 func rejected(t task, why string) result {
@@ -713,6 +716,11 @@ func (a *agent) execute(ctx context.Context, t task) result {
 				return rejected(t, "not a standalone server: "+p)
 			}
 		}
+		for _, tag := range plan.Relays {
+			if !tagRe.MatchString(tag) {
+				return rejected(t, "bad relay tag "+tag)
+			}
+		}
 		removed, failed := []string{}, []string{}
 		for _, n := range plan.Nodes {
 			if _, err := a.psm(ctx, nil, "node", "delete", n.Core, n.Protocol, n.Tag, "--yes", "--if-exists", "--json"); err != nil {
@@ -726,6 +734,14 @@ func (a *agent) execute(ctx context.Context, t task) result {
 				failed = append(failed, p+": "+err.Error())
 			} else {
 				removed = append(removed, p)
+			}
+		}
+		// the realm rules and the accounting rules that go with them
+		for _, tag := range plan.Relays {
+			if _, err := a.psm(ctx, nil, "relay", "delete", tag, "--yes", "--if-exists", "--json"); err != nil {
+				failed = append(failed, tag+": "+err.Error())
+			} else {
+				removed = append(removed, tag)
 			}
 		}
 		out, _ := json.Marshal(map[string][]string{"removed": removed, "failed": failed})
